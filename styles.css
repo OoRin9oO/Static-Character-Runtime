@@ -191,6 +191,19 @@ h1 { margin: 0; font-size: clamp(1.7rem, 4vw, 2.5rem); }
 .editor-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .transition-editor > p { margin: 10px 0 0; color: #777d91; font-size: .7rem; }
 
+.event-panel { margin-top: 18px; }
+.event-panel h2 { margin: 0 0 9px; color: #c9ccda; font-size: .82rem; }
+.event-panel p { margin: 8px 0 0; color: #777d91; font-size: .7rem; }
+.event-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.event-controls select {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 9px;
+  background: #171a25;
+  color: #f6f7fb;
+}
+
 .state-group { margin-top: 22px; }
 .state-group h2 { margin: 0 0 10px; color: #c9ccda; font-size: .82rem; }
 

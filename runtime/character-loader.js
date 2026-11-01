@@ -64,6 +64,26 @@ function validateBehavior(behavior, stateId) {
   }
 }
 
+function validateEvents(events, stateIds) {
+  if (events === undefined) return;
+  if (!events || typeof events !== "object" || Array.isArray(events)) {
+    throw new Error("events 必须是对象。");
+  }
+  for (const [eventType, action] of Object.entries(events)) {
+    if (!/^[a-z][a-z0-9_]*$/.test(eventType)) {
+      throw new Error(`事件名称“${eventType}”格式不正确。`);
+    }
+    if (!action || typeof action !== "object" || Array.isArray(action)) {
+      throw new Error(`events.${eventType} 必须是对象。`);
+    }
+    requireText(action.state, `events.${eventType}.state`);
+    if (!stateIds.has(action.state)) {
+      throw new Error(`事件“${eventType}”引用了不存在的状态“${action.state}”。`);
+    }
+    validateBehavior(action, `event:${eventType}`);
+  }
+}
+
 function validateOptionalSettings(manifest) {
   if (manifest.canvas !== undefined) {
     const { width, height } = manifest.canvas || {};
@@ -145,6 +165,7 @@ export function validateCharacterManifest(manifest, manifestUrl) {
   if (!stateIds.has(manifest.defaultState)) {
     throw new Error(`默认状态“${manifest.defaultState}”不存在。`);
   }
+  validateEvents(manifest.events, stateIds);
 
   return new Map(manifest.states.map((state) => [state.id, state]));
 }

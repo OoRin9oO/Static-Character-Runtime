@@ -22,6 +22,7 @@
           <div class="state-details">
             <span>基础：<code id="base-state">-</code></span>
             <span>覆盖：<code id="override-state">无</code></span>
+            <span>事件：<code id="last-event">无</code></span>
           </div>
         </div>
       </section>
@@ -62,6 +63,15 @@
           </div>
           <p>仅调整当前页面预览，不会修改角色配置文件。</p>
         </details>
+
+        <section class="event-panel">
+          <h2>事件模拟器</h2>
+          <div class="event-controls">
+            <select id="event-type" aria-label="测试事件"></select>
+            <button id="send-event" class="secondary-button" type="button">发送事件</button>
+          </div>
+          <p>通过统一入口模拟聊天或任务事件。</p>
+        </section>
         <div id="state-groups" class="state-groups"></div>
         <footer>
           <span id="manifest-path"></span>

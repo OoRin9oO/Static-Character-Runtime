@@ -4,6 +4,7 @@ import {
   resolveStateImageUrl,
 } from "./runtime/character-loader.js";
 import { CharacterStateManager } from "./runtime/state-manager.js";
+import { CharacterEventDispatcher } from "./runtime/event-dispatcher.js";
 
 const DEFAULT_MANIFEST = "./characters/github-girl/character.json";
 
@@ -27,12 +28,16 @@ const elements = {
   transitionDistanceRow: document.querySelector("#transition-distance-row"),
   previewTransition: document.querySelector("#preview-transition"),
   resetTransition: document.querySelector("#reset-transition"),
+  lastEvent: document.querySelector("#last-event"),
+  eventType: document.querySelector("#event-type"),
+  sendEvent: document.querySelector("#send-event"),
 };
 
 let manifest;
 let manifestUrl;
 let states;
 let stateManager;
+let eventDispatcher;
 let nextRenderMessage = "";
 let activeLayer = 0;
 let activeStateId = null;
@@ -235,6 +240,20 @@ function renderControls() {
   }
 }
 
+function renderEventControls() {
+  elements.eventType.replaceChildren();
+  for (const eventType of Object.keys(manifest.events || {})) {
+    const option = document.createElement("option");
+    option.value = eventType;
+    option.textContent = eventType;
+    elements.eventType.append(option);
+  }
+  elements.sendEvent.disabled = elements.eventType.options.length === 0;
+  elements.sendEvent.addEventListener("click", () => {
+    eventDispatcher.dispatch({ type: elements.eventType.value, payload: { source: "simulator" } });
+  });
+}
+
 async function start() {
   try {
     const requested = new URLSearchParams(location.search).get("manifest") || DEFAULT_MANIFEST;
@@ -255,11 +274,23 @@ async function start() {
       },
       onError: (message) => { elements.status.textContent = message; },
     });
+    eventDispatcher = new CharacterEventDispatcher({
+      stateManager,
+      eventMap: manifest.events || {},
+      onEvent: (event) => {
+        elements.lastEvent.textContent = event.type;
+      },
+      onError: (message) => { elements.status.textContent = message; },
+    });
+    window.staticCharacterRuntime = Object.freeze({
+      dispatch: (event) => eventDispatcher.dispatch(event),
+    });
     elements.clearOverrides.addEventListener("click", () => {
       stateManager.clearOverrides("control_panel");
     });
     applyTransitionSettings(manifest.transition);
     bindTransitionEditor();
+    renderEventControls();
     renderControls();
     await renderSnapshot(stateManager.getSnapshot("initial"));
   } catch (error) {

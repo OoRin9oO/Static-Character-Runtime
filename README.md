@@ -19,6 +19,8 @@
 3. 点击右侧状态按钮切换图片。
 4. 关闭启动窗口或按 `Ctrl+C` 停止。
 
+若端口 `4173` 已被其他项目占用，启动器会自动尝试 `4174` 至 `4183`，并让 Edge 打开实际使用的地址。
+
 启动器只使用 Windows 自带的 PowerShell，不需要安装 Node.js、Python 或其他依赖。
 
 ## 添加其他角色
@@ -37,6 +39,7 @@ http://127.0.0.1:4173/?manifest=./characters/新角色/character.json
 - 根据清单自动生成状态按钮。
 - 双图层预加载与稳定切换，支持淡入淡出、弹跳、弹出和无动画。
 - 内置过渡编辑器，可实时调整动画类型、时长和弹跳幅度。
+- 提供统一事件入口和事件模拟器，可由聊天、任务或未来 AI 模块驱动状态。
 - 固定舞台比例，兼容素材之间 1 像素的画布差异。
 - 图片或状态不存在时回退到默认待机状态。
 - 不绑定 GitHub娘，其他角色可以使用同一运行时。
@@ -48,15 +51,29 @@ http://127.0.0.1:4173/?manifest=./characters/新角色/character.json
 ```text
 runtime/character-loader.js       角色清单读取、验证与图片预加载
 runtime/state-manager.js          基础状态、临时覆盖、优先级与自动恢复
+runtime/event-dispatcher.js       统一事件校验、映射与分发
 characters/<character-id>/        独立角色包
 app.js                            页面协调与控制面板
 ```
 
 完整角色包字段与自定义方法见 [`characters/README.md`](./characters/README.md)。
 
+## 事件接口
+
+页面加载后，外部模块可以调用：
+
+```js
+window.staticCharacterRuntime.dispatch({
+  type: "assistant_thinking",
+  payload: {}
+});
+```
+
+事件只能使用角色清单 `events` 中已注册的映射；未知事件会被安全忽略。
+
 ## 常见问题
 
-- 如果提示端口 `4173` 被占用，请先关闭之前打开的启动窗口，再重新双击 `start.cmd`。
+- 若 `4173` 被占用，启动器会自动选择后续空闲端口。仅当 `4173` 至 `4183` 全部占用时才会停止。
 - 页面必须通过 `start.cmd` 打开，不能直接双击 `index.html`，否则浏览器无法读取 JSON 角色清单。
 
 ## 许可证

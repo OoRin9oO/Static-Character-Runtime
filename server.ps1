@@ -4,8 +4,9 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Address = [Net.IPAddress]::Loopback
-$Port = 4173
-$Url = "http://127.0.0.1:$Port/"
+$PreferredPort = 4173
+$Port = $null
+$Url = $null
 
 $MimeTypes = @{
     ".html" = "text/html; charset=utf-8"
@@ -47,19 +48,33 @@ if (-not $EdgePath) {
     exit 1
 }
 
-$Listener = [Net.Sockets.TcpListener]::new($Address, $Port)
+$Listener = $null
 
 try {
-    try {
-        $Listener.Start()
+    foreach ($CandidatePort in $PreferredPort..($PreferredPort + 10)) {
+        $CandidateListener = [Net.Sockets.TcpListener]::new($Address, $CandidatePort)
+        try {
+            $CandidateListener.Start()
+            $Listener = $CandidateListener
+            $Port = $CandidatePort
+            break
+        }
+        catch {
+            $CandidateListener.Stop()
+        }
     }
-    catch {
-        Write-Host "The local server could not start. Port $Port may already be in use." -ForegroundColor Red
-        Write-Host $_.Exception.Message -ForegroundColor DarkRed
+
+    if (-not $Listener) {
+        Write-Host "The local server could not start. Ports $PreferredPort-$($PreferredPort + 10) are in use." -ForegroundColor Red
         exit 1
     }
 
+    $Url = "http://127.0.0.1:$Port/"
+
     Write-Host "Static Character Runtime is running: $Url" -ForegroundColor Green
+    if ($Port -ne $PreferredPort) {
+        Write-Host "Port $PreferredPort is occupied; using port $Port instead." -ForegroundColor Yellow
+    }
     Write-Host "Close this window or press Ctrl+C to stop."
     if (-not $NoBrowser) {
         Start-Process -FilePath $EdgePath -ArgumentList $Url
@@ -128,5 +143,5 @@ try {
     }
 }
 finally {
-    $Listener.Stop()
+    if ($Listener) { $Listener.Stop() }
 }
