@@ -168,6 +168,50 @@ h1 { margin: 0; font-size: clamp(1.7rem, 4vw, 2.5rem); }
 }
 .secondary-button:hover { background: rgba(255,255,255,.06); }
 
+.chat-panel { margin-top: 18px; }
+.chat-panel h2 { margin: 0 0 9px; color: #c9ccda; font-size: .82rem; }
+.model-picker { display: grid; grid-template-columns: 1fr 1fr auto; gap: 7px; margin-bottom: 6px; }
+.model-picker select {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 9px;
+  background: #171a25;
+  color: #f6f7fb;
+}
+.model-picker .secondary-button { background: transparent; color: #bfc3d2; }
+.chat-panel > small { display: block; margin-bottom: 10px; color: #8f94a7; }
+.chat-reply {
+  min-height: 48px;
+  margin: 0 0 10px;
+  padding: 11px;
+  border-radius: 11px;
+  background: rgba(199,125,255,.08);
+  color: #e7e8ef;
+  font-size: .86rem;
+  line-height: 1.55;
+}
+.chat-panel form { display: grid; gap: 8px; }
+.chat-panel textarea {
+  width: 100%;
+  padding: 10px;
+  resize: vertical;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 10px;
+  background: #0d0f17;
+  color: #f6f7fb;
+  font: inherit;
+}
+.chat-panel button {
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: #a85ee8;
+  color: white;
+  cursor: pointer;
+}
+.chat-panel button:disabled { opacity: .55; cursor: wait; }
+
 .transition-editor {
   margin-top: 14px;
   padding: 12px;
@@ -256,4 +300,5 @@ footer { margin-top: 24px; color: #777d91; font-size: .72rem; word-break: break-
   .app-shell { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
   .stage-panel { min-height: 68vh; }
   .control-panel { max-height: none; }
+  .model-picker { grid-template-columns: 1fr; }
 }

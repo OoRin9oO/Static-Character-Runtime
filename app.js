@@ -35,6 +35,14 @@ const elements = {
   intentInput: document.querySelector("#intent-input"),
   sendIntent: document.querySelector("#send-intent"),
   intentResult: document.querySelector("#intent-result"),
+  chatForm: document.querySelector("#chat-form"),
+  chatInput: document.querySelector("#chat-input"),
+  chatSend: document.querySelector("#chat-send"),
+  chatReply: document.querySelector("#chat-reply"),
+  aiProvider: document.querySelector("#ai-provider"),
+  aiModel: document.querySelector("#ai-model"),
+  applyModel: document.querySelector("#apply-model"),
+  activeModel: document.querySelector("#active-model"),
 };
 
 let manifest;
@@ -48,6 +56,8 @@ let activeLayer = 0;
 let activeStateId = null;
 let transitionToken = 0;
 let transitionSettings;
+let aiProviders = new Map();
+let activeAiConfig = null;
 
 const DEFAULT_TRANSITION = { type: "crossfade", durationMs: 220, distancePx: 18 };
 const TRANSITION_CLASSES = ["transition-bounce", "transition-pop", "transition-none"];
@@ -259,6 +269,115 @@ function bindIntentSimulator() {
   });
 }
 
+function renderModelOptions(providerId) {
+  const provider = aiProviders.get(providerId);
+  elements.aiModel.replaceChildren();
+  if (!provider) return;
+  for (const modelId of provider.models) {
+    const option = document.createElement("option");
+    option.value = modelId;
+    option.textContent = modelId;
+    option.selected = modelId === provider.defaultModel;
+    elements.aiModel.append(option);
+  }
+}
+
+function thinkingLabel(modelId) {
+  return modelId.startsWith("glm-5.3") ? "最低思考（无法关闭）" : "思考已关闭";
+}
+
+async function loadModelOptions() {
+  const response = await fetch("./api/models");
+  if (!response.ok) throw new Error(`模型配置读取失败：HTTP ${response.status}`);
+  const config = await response.json();
+  aiProviders = new Map(config.providers.map((provider) => [provider.id, provider]));
+  elements.aiProvider.replaceChildren();
+  for (const provider of config.providers) {
+    const option = document.createElement("option");
+    option.value = provider.id;
+    option.textContent = provider.name;
+    option.selected = provider.id === config.defaultProvider;
+    elements.aiProvider.append(option);
+  }
+  renderModelOptions(elements.aiProvider.value);
+  const provider = aiProviders.get(elements.aiProvider.value);
+  activeAiConfig = { provider: provider.id, model: provider.defaultModel };
+  elements.activeModel.textContent = `当前：${provider.name} / ${provider.defaultModel} / ${thinkingLabel(provider.defaultModel)}`;
+
+  elements.aiProvider.addEventListener("change", () => renderModelOptions(elements.aiProvider.value));
+  elements.applyModel.addEventListener("click", () => {
+    const selectedProvider = aiProviders.get(elements.aiProvider.value);
+    activeAiConfig = { provider: selectedProvider.id, model: elements.aiModel.value };
+    elements.activeModel.textContent = `当前：${selectedProvider.name} / ${elements.aiModel.value} / ${thinkingLabel(elements.aiModel.value)}`;
+  });
+}
+
+function bindChat() {
+  elements.chatForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = elements.chatInput.value.trim();
+    if (!message || elements.chatSend.disabled) return;
+    if (!activeAiConfig) {
+      elements.chatReply.textContent = "模型配置尚未加载完成。";
+      return;
+    }
+
+    elements.chatSend.disabled = true;
+    elements.chatReply.textContent = "正在思考……";
+    eventDispatcher.dispatch({ type: "user_message_received", payload: { source: "chat" } });
+    eventDispatcher.dispatch({ type: "assistant_thinking", payload: { source: "chat" } });
+
+    let cooldownMs = 0;
+    try {
+      const response = await fetch("./api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          provider: activeAiConfig.provider,
+          model: activeAiConfig.model,
+          states: manifest.states.map((state) => ({
+            id: state.id,
+            description: state.description || state.label,
+          })),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        const error = new Error(result.error || `AI 请求失败：HTTP ${response.status}`);
+        error.status = response.status;
+        error.retryAfterMs = result.retryAfterMs || 0;
+        throw error;
+      }
+
+      eventDispatcher.dispatch({ type: "assistant_response_finished", payload: { source: "chat" } });
+      elements.chatReply.textContent = result.allowed
+        ? result.reply
+        : "抱歉，这个请求我不能协助。我们可以换一个安全、合适的话题。";
+      actionIntentController.submit(result.intent);
+      elements.chatInput.value = "";
+    } catch (error) {
+      eventDispatcher.dispatch({ type: "assistant_response_finished", payload: { source: "chat" } });
+      if (error.status === 429) {
+        cooldownMs = Math.max(1000, error.retryAfterMs || 10000);
+        elements.chatReply.textContent = `请求过于频繁，请约 ${Math.ceil(cooldownMs / 1000)} 秒后重试。`;
+      } else {
+        elements.chatReply.textContent = error.message;
+      }
+    } finally {
+      if (cooldownMs > 0) {
+        setTimeout(() => {
+          elements.chatSend.disabled = false;
+          elements.chatInput.focus();
+        }, cooldownMs);
+      } else {
+        elements.chatSend.disabled = false;
+        elements.chatInput.focus();
+      }
+    }
+  });
+}
+
 async function start() {
   try {
     const requested = new URLSearchParams(location.search).get("manifest") || DEFAULT_MANIFEST;
@@ -316,6 +435,8 @@ async function start() {
     bindTransitionEditor();
     renderEventControls();
     bindIntentSimulator();
+    await loadModelOptions();
+    bindChat();
     renderControls();
     await renderSnapshot(stateManager.getSnapshot("initial"));
   } catch (error) {

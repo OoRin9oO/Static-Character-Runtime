@@ -36,6 +36,21 @@
         <div id="status-message" class="status-message" role="status"></div>
         <button id="clear-overrides" class="secondary-button" type="button">清除临时状态</button>
 
+        <section class="chat-panel">
+          <h2>单轮对话</h2>
+          <div class="model-picker">
+            <select id="ai-provider" aria-label="AI 供应商"></select>
+            <select id="ai-model" aria-label="AI 模型"></select>
+            <button id="apply-model" class="secondary-button" type="button">应用模型</button>
+          </div>
+          <small id="active-model">正在读取模型配置……</small>
+          <p id="chat-reply" class="chat-reply">输入一句话，她会回复并选择相应动作。</p>
+          <form id="chat-form">
+            <textarea id="chat-input" rows="3" maxlength="2000" placeholder="对 GitHub娘说些什么……" required></textarea>
+            <button id="chat-send" type="submit">发送</button>
+          </form>
+        </section>
+
         <details class="transition-editor">
           <summary>过渡编辑器</summary>
           <div class="editor-grid">
