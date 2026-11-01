@@ -1,12 +1,21 @@
 import {
   loadCharacterManifest,
   preloadImage,
+  resolveRegisteredCharacterManifestUrl,
   resolveStateImageUrl,
 } from "./runtime/character-loader.js";
 import { CharacterStateManager } from "./runtime/state-manager.js";
 import { CharacterEventDispatcher } from "./runtime/event-dispatcher.js";
 import { ActionIntentController } from "./runtime/action-intent-controller.js";
 import { LiveEventInterface } from "./runtime/live-event-interface.js";
+import {
+  SceneStore, createScene, createCharacterInstance, validateScene,
+  DEFAULT_SCENE_LIMITS, HARD_SCENE_LIMITS, LIMIT_STORAGE_KEY,
+} from "./runtime/scene-manager.js";
+import {
+  buildCharacterManifest, inferNewCharacterPackage, planAssetImport, SECTION_NAMES,
+  validateArchiveTargets,
+} from "./runtime/asset-import.js";
 
 const DEFAULT_MANIFEST = "./characters/github-girl/character.json";
 
@@ -52,6 +61,22 @@ const elements = {
   shortcutState: document.querySelector("#shortcut-state"),
   addShortcut: document.querySelector("#add-shortcut"),
   shortcutList: document.querySelector("#shortcut-list"),
+  scenePicker: document.querySelector("#scene-picker"),
+  newScene: document.querySelector("#new-scene"),
+  renameScene: document.querySelector("#rename-scene"),
+  deleteScene: document.querySelector("#delete-scene"),
+  duplicateScene: document.querySelector("#duplicate-scene"),
+  addInstance: document.querySelector("#add-instance"),
+  editInstanceLimits: document.querySelector("#edit-instance-limits"),
+  sceneInstances: document.querySelector("#scene-instances"),
+  assetFiles: document.querySelector("#asset-files"),
+  newRoleFiles: document.querySelector("#new-role-files"),
+  assetDropZone: document.querySelector("#asset-drop-zone"),
+  assetImportList: document.querySelector("#asset-import-list"),
+  commitAssets: document.querySelector("#commit-assets"),
+  assetCharacter: document.querySelector("#asset-character"),
+  assetSection: document.querySelector("#asset-section"),
+  actionEditorList: document.querySelector("#action-editor-list"),
 };
 
 let manifest;
@@ -68,6 +93,12 @@ let transitionSettings;
 let aiProviders = new Map();
 let activeAiConfig = null;
 let liveEventInterface;
+let sceneStore;
+let characterRegistry;
+let pendingAssets = [];
+let pendingCharacterManifest = null;
+let sceneRenderToken = 0;
+const sceneManifestCache = new Map();
 
 const DEFAULT_TRANSITION = { type: "crossfade", durationMs: 220, distancePx: 18 };
 const TRANSITION_CLASSES = ["transition-bounce", "transition-pop", "transition-none"];
@@ -225,7 +256,8 @@ function renderControls() {
   const labels = manifest.groups || {};
   const grouped = new Map();
   for (const state of manifest.states) {
-    const groupId = state.group || "other";
+    const rawGroupId = state.group || "other";
+    const groupId = Object.keys(labels).find((key) => key.toLowerCase() === rawGroupId.toLowerCase()) || rawGroupId;
     if (!grouped.has(groupId)) grouped.set(groupId, []);
     grouped.get(groupId).push(state);
   }
@@ -259,6 +291,50 @@ function renderControls() {
   }
 }
 
+function renderActionEditor() {
+  if (!elements.actionEditorList) return;
+  elements.actionEditorList.replaceChildren();
+  for (const state of manifest.states) {
+    const row = document.createElement("div"); row.className = "asset-import-row";
+    const image = document.createElement("span"); image.textContent = state.image;
+    const label = document.createElement("input"); label.value = state.label; label.setAttribute("aria-label", `动作名称 ${state.id}`);
+    const save = document.createElement("button"); save.type = "button"; save.textContent = "保存名称";
+    save.addEventListener("click", async () => {
+      const response = await fetch("./api/assets/rename", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ characterId: manifest.id, stateId: state.id, label: label.value.trim() }) });
+      const result = await response.json();
+      if (!response.ok) { elements.status.textContent = result.error || "名称保存失败。"; return; }
+      state.label = result.label;
+      elements.status.textContent = `已更新动作名称：${result.label}`;
+      renderControls(); renderShortcuts();
+    });
+    row.append(image, label, save); elements.actionEditorList.append(row);
+  }
+}
+
+function updateSceneInstance(instance, updates) {
+  const scene = sceneStore.active;
+  const target = scene.characters.find((item) => item.instanceId === instance.instanceId);
+  if (!target) return;
+  if (updates.currentState) target.currentState = updates.currentState;
+  if (updates.displayName) target.displayName = updates.displayName;
+  if (updates.transform) target.transform = { ...target.transform, ...updates.transform };
+  sceneStore.update(scene);
+  renderSceneStage(scene);
+}
+
+async function loadSceneManifest(entry) {
+  if (!entry) throw new Error("角色未登记到角色目录。");
+  const url = resolveRegisteredCharacterManifestUrl(entry, location.href);
+  const key = url.href;
+  if (!sceneManifestCache.has(key)) {
+    sceneManifestCache.set(key, fetch(`${url.pathname}?v=${Date.now()}`, { cache: "no-store" }).then((response) => {
+      if (!response.ok) throw new Error(`角色清单读取失败：HTTP ${response.status}`);
+      return response.json();
+    }));
+  }
+  return sceneManifestCache.get(key);
+}
+
 function renderEventControls() {
   elements.eventType.replaceChildren();
   for (const eventType of Object.keys(manifest.events || {})) {
@@ -287,9 +363,18 @@ function navigateToManifest(path) {
 }
 
 async function bindCharacterTools() {
-  const response = await fetch("./characters/index.json");
+  const response = await fetch(`./characters/index.json?v=${Date.now()}`, { cache: "no-store" });
   if (!response.ok) throw new Error(`角色目录读取失败：HTTP ${response.status}`);
   const registry = await response.json();
+  characterRegistry = registry;
+  elements.assetCharacter.replaceChildren();
+  for (const character of registry.characters || []) {
+    const assetOption = document.createElement("option");
+    assetOption.value = character.id;
+    assetOption.textContent = character.name;
+    assetOption.selected = character.id === manifest.id;
+    elements.assetCharacter.append(assetOption);
+  }
   elements.characterPicker.replaceChildren();
   for (const character of registry.characters || []) {
     const option = document.createElement("option");
@@ -332,6 +417,13 @@ function readShortcuts() {
 function renderShortcuts() {
   const shortcuts = readShortcuts();
   elements.shortcutList.replaceChildren();
+  elements.shortcutState.replaceChildren();
+  for (const state of manifest.states) {
+    const option = document.createElement("option");
+    option.value = state.id;
+    option.textContent = `${state.label} (${state.id})`;
+    elements.shortcutState.append(option);
+  }
   for (const stateId of shortcuts) {
     const state = states.get(stateId);
     const button = document.createElement("button");
@@ -348,13 +440,6 @@ function renderShortcuts() {
 }
 
 function bindShortcutEditor() {
-  elements.shortcutState.replaceChildren();
-  for (const state of manifest.states) {
-    const option = document.createElement("option");
-    option.value = state.id;
-    option.textContent = `${state.label} (${state.id})`;
-    elements.shortcutState.append(option);
-  }
   elements.addShortcut.addEventListener("click", () => {
     const shortcuts = readShortcuts();
     const stateId = elements.shortcutState.value;
@@ -363,6 +448,381 @@ function bindShortcutEditor() {
     renderShortcuts();
   });
   renderShortcuts();
+}
+
+function characterEntry(id) {
+  return characterRegistry?.characters?.find((item) => item.id === id);
+}
+
+function renderSceneEditor() {
+  const active = sceneStore.active;
+  elements.scenePicker.replaceChildren();
+  for (const scene of sceneStore.scenes) {
+    const option = document.createElement("option");
+    option.value = scene.id;
+    option.textContent = scene.name;
+    option.selected = scene.id === active.id;
+    elements.scenePicker.append(option);
+  }
+  elements.sceneInstances.replaceChildren();
+  for (const instance of active.characters) {
+    const card = document.createElement("details");
+    card.className = "instance-card";
+    card.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = `${instance.displayName}${instance.enabled ? "" : "（隐藏）"}`;
+    const controls = document.createElement("div");
+    controls.className = "instance-controls";
+    const name = document.createElement("input");
+    name.value = instance.displayName;
+    name.setAttribute("aria-label", "角色实例显示名称");
+    name.addEventListener("change", () => {
+      const candidate = name.value.trim();
+      if (!candidate || active.characters.some((other) => other !== instance && other.displayName === candidate)) {
+        elements.status.textContent = "实例显示名称不能为空，且必须在当前场景唯一。";
+        name.value = instance.displayName;
+        return;
+      }
+      instance.displayName = candidate;
+      sceneStore.update(active);
+      renderSceneEditor();
+    });
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.checked = instance.enabled;
+    enabled.setAttribute("aria-label", "启用角色实例");
+    enabled.addEventListener("change", () => {
+      instance.enabled = enabled.checked;
+      const errors = validateScene(active, { limits: sceneStore.limits, characterIds: new Set(characterRegistry.characters.map((item) => item.id)) });
+      if (errors.length) { instance.enabled = !enabled.checked; enabled.checked = instance.enabled; elements.status.textContent = errors[0]; return; }
+      sceneStore.update(active); renderSceneEditor();
+    });
+    const remove = document.createElement("button");
+    remove.type = "button"; remove.className = "secondary-button"; remove.textContent = "移除";
+    remove.addEventListener("click", () => { active.characters = active.characters.filter((item) => item !== instance); sceneStore.update(active); renderSceneEditor(); });
+    const statePicker = document.createElement("select");
+    statePicker.setAttribute("aria-label", `${instance.displayName} 的当前动作`);
+    const entry = characterEntry(instance.characterId);
+    statePicker.disabled = true;
+    loadSceneManifest(entry).then((characterManifest) => {
+        if (!statePicker.isConnected) return;
+        for (const state of characterManifest.states || []) {
+          const option = document.createElement("option");
+          option.value = state.id; option.textContent = state.label; option.selected = (instance.currentState || instance.initialState || characterManifest.defaultState) === state.id;
+          statePicker.append(option);
+        }
+        statePicker.disabled = false;
+      }).catch((error) => { if (statePicker.isConnected) elements.status.textContent = error.message; });
+    statePicker.addEventListener("change", () => updateSceneInstance(instance, { currentState: statePicker.value }));
+    controls.append(name, statePicker, enabled, remove);
+    const transform = document.createElement("div");
+    transform.className = "transform-controls";
+    for (const [key, label, min, max, step] of [["x", "X", 0, 1, .01], ["y", "Y", 0, 1, .01], ["scale", "缩放", .1, 3, .05]]) {
+      const wrapper = document.createElement("label"); wrapper.textContent = label;
+      const input = document.createElement("input"); input.type = "number"; input.min = min; input.max = max; input.step = step; input.value = instance.transform[key];
+      input.addEventListener("change", () => { const previous = instance.transform[key]; instance.transform[key] = Number(input.value); const errors = validateScene(active, { limits: sceneStore.limits }); if (errors.length) { instance.transform[key] = previous; input.value = previous; elements.status.textContent = errors[0]; } else { sceneStore.update(active); renderSceneStage(active); } });
+      wrapper.append(input); transform.append(wrapper);
+    }
+    const move = document.createElement("div"); move.className = "instance-move";
+    const left = document.createElement("button"); left.type = "button"; left.textContent = "←"; left.title = "左移微调";
+    const right = document.createElement("button"); right.type = "button"; right.textContent = "→"; right.title = "右移微调";
+    const up = document.createElement("button"); up.type = "button"; up.textContent = "↑"; up.title = "上移微调";
+    const down = document.createElement("button"); down.type = "button"; down.textContent = "↓"; down.title = "下移微调";
+    const front = document.createElement("button"); front.type = "button"; front.textContent = "置前";
+    const back = document.createElement("button"); back.type = "button"; back.textContent = "置后";
+    left.addEventListener("click", () => { instance.transform.x = Math.max(0, +(instance.transform.x - .01).toFixed(2)); sceneStore.update(active); renderSceneEditor(); });
+    right.addEventListener("click", () => { instance.transform.x = Math.min(1, +(instance.transform.x + .01).toFixed(2)); sceneStore.update(active); renderSceneEditor(); });
+    up.addEventListener("click", () => { instance.transform.y = Math.min(1, +(instance.transform.y + .01).toFixed(2)); sceneStore.update(active); renderSceneEditor(); });
+    down.addEventListener("click", () => { instance.transform.y = Math.max(0, +(instance.transform.y - .01).toFixed(2)); sceneStore.update(active); renderSceneEditor(); });
+    front.addEventListener("click", () => { instance.transform.zIndex = Math.max(...active.characters.map((item) => item.transform.zIndex || 0)) + 1; sceneStore.update(active); renderSceneEditor(); });
+    back.addEventListener("click", () => { instance.transform.zIndex = Math.min(...active.characters.map((item) => item.transform.zIndex || 0)) - 1; sceneStore.update(active); renderSceneEditor(); });
+    move.append(left, right, up, down, front, back);
+    card.append(summary, controls, transform, move);
+    card.addEventListener("dragover", (event) => event.preventDefault());
+    card.addEventListener("drop", (event) => {
+      if (!event.dataTransfer?.files?.length) return;
+      event.preventDefault();
+      handleAssetFiles(event.dataTransfer.files, instance.characterId);
+    });
+    elements.sceneInstances.append(card);
+  }
+  renderSceneStage(active);
+}
+
+function renderSceneStage(scene) {
+  const renderToken = ++sceneRenderToken;
+  const stage = document.querySelector(".stage");
+  const visibleInstances = [...scene.characters]
+    .filter((item) => item.enabled)
+    .sort((a, b) => a.transform.zIndex - b.transform.zIndex);
+  stage.querySelectorAll(".scene-instance").forEach((node) => node.remove());
+  if (visibleInstances.length === 0) {
+    document.body.classList.remove("scene-editor-mode");
+    stage.querySelectorAll(".character-layer, .stage-glow").forEach((node) => node.hidden = false);
+    return;
+  }
+  stage.querySelectorAll(".character-layer, .stage-glow").forEach((node) => node.hidden = true);
+  document.body.classList.add("scene-editor-mode");
+  for (const instance of visibleInstances) {
+    const entry = characterEntry(instance.characterId);
+    if (!entry) continue;
+    const stateId = instance.currentState || instance.initialState;
+    const stateUrl = resolveRegisteredCharacterManifestUrl(entry, location.href);
+    const image = document.createElement("img");
+    image.className = "scene-instance";
+    image.alt = instance.displayName;
+    image.dataset.instanceId = instance.instanceId;
+    image.style.left = `${instance.transform.x * 100}%`;
+    image.style.top = `${(1 - instance.transform.y) * 100}%`;
+    image.style.transform = `translate(-50%, -50%) scale(${instance.transform.scale})`;
+    image.style.zIndex = String(10 + instance.transform.zIndex);
+    image.style.display = "block";
+    image.style.visibility = "visible";
+    image.style.opacity = "1";
+    image.title = instance.displayName;
+    stage.append(image);
+    if (!document.body.classList.contains("live-mode")) bindSceneImageDrag(image, instance, scene, stage);
+    loadSceneManifest(entry).then((characterManifest) => {
+      if (renderToken !== sceneRenderToken) return;
+      const state = characterManifest.states.find((item) => item.id === stateId) || characterManifest.states.find((item) => item.id === characterManifest.defaultState);
+      if (!state) return;
+      image.onerror = () => { elements.status.textContent = `实例 ${instance.displayName} 的图片无法加载：${state.image}`; };
+      image.src = new URL(state.image, new URL("./", stateUrl)).href + `?v=${Date.now()}`;
+    }).catch((error) => { if (renderToken === sceneRenderToken) elements.status.textContent = error.message; });
+  }
+}
+
+function bindSceneImageDrag(image, instance, scene, stage) {
+  image.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    image.setPointerCapture(event.pointerId);
+    image.style.cursor = "grabbing";
+    const rect = stage.getBoundingClientRect();
+    const originX = event.clientX;
+    const originY = event.clientY;
+    const startX = instance.transform.x;
+    const startY = instance.transform.y;
+    const move = (pointerEvent) => {
+      instance.transform.x = Math.max(0, Math.min(1, startX + (pointerEvent.clientX - originX) / rect.width));
+      instance.transform.y = Math.max(0, Math.min(1, startY - (pointerEvent.clientY - originY) / rect.height));
+      image.style.left = `${instance.transform.x * 100}%`;
+      image.style.top = `${(1 - instance.transform.y) * 100}%`;
+    };
+    const finish = () => {
+      image.removeEventListener("pointermove", move);
+      image.removeEventListener("pointerup", finish);
+      image.removeEventListener("pointercancel", finish);
+      image.style.cursor = "grab";
+      sceneStore.update(scene);
+      renderSceneEditor();
+    };
+    image.addEventListener("pointermove", move);
+    image.addEventListener("pointerup", finish, { once: true });
+    image.addEventListener("pointercancel", finish, { once: true });
+  });
+}
+
+function addCharacterInstance() {
+  const active = sceneStore.active;
+  const selectedManifest = elements.characterPicker.selectedOptions[0]?.value;
+  const entry = characterRegistry.characters.find((item) => new URL(item.manifest, location.href).pathname === selectedManifest) || characterEntry(manifest.id);
+  if (!entry) { elements.status.textContent = "请先将角色包登记到角色目录。"; return; }
+  const limits = sceneStore.limits;
+  if (active.characters.filter((item) => item.enabled).length >= limits.maxInstances) { elements.status.textContent = `已达到场景启用实例上限 ${limits.maxInstances}。可在“实例数量限制”中调整。`; return; }
+  if (active.characters.some((item) => item.characterId === entry.id)) { elements.status.textContent = `角色 ${entry.name} 已在当前场景中；每个角色只保留一个实例。`; return; }
+  loadSceneManifest(entry).then((characterManifest) => {
+    const instance = createCharacterInstance(entry, active, characterManifest);
+    active.characters.push(instance);
+    const errors = validateScene(active, { limits, characterIds: new Set(characterRegistry.characters.map((item) => item.id)) });
+    if (errors.length) { active.characters.pop(); elements.status.textContent = errors[0]; return; }
+    sceneStore.update(active); renderSceneEditor();
+  }).catch((error) => { elements.status.textContent = error.message; });
+}
+
+function bindSceneEditor() {
+  sceneStore = new SceneStore({ characterIds: new Set(characterRegistry.characters.map((item) => item.id)) });
+  const refresh = () => renderSceneEditor();
+  elements.scenePicker.addEventListener("change", () => { sceneStore.select(elements.scenePicker.value); refresh(); });
+  elements.newScene.addEventListener("click", () => {
+    const name = prompt("新场景名称", "新场景");
+    if (name?.trim()) sceneStore.add(createScene(name));
+    refresh();
+  });
+  elements.renameScene.addEventListener("click", () => {
+    const name = prompt("场景名称", sceneStore.active.name);
+    if (name?.trim()) { sceneStore.active.name = name.trim(); sceneStore.update(sceneStore.active); refresh(); }
+  });
+  elements.duplicateScene.addEventListener("click", () => {
+    const source = sceneStore.active;
+    const copy = createScene(`${source.name} 副本`, source.characters);
+    copy.interaction = structuredClone(source.interaction);
+    copy.events = structuredClone(source.events);
+    copy.characters.forEach((item) => { item.instanceId = crypto.randomUUID(); });
+    sceneStore.add(copy); refresh();
+  });
+  elements.deleteScene.addEventListener("click", () => {
+    try { sceneStore.remove(sceneStore.active.id); refresh(); }
+    catch (error) { elements.status.textContent = error.message; }
+  });
+  elements.addInstance.addEventListener("click", addCharacterInstance);
+  elements.editInstanceLimits.addEventListener("click", () => {
+    const current = sceneStore.limits;
+    const total = Number(prompt(`每場景启用实例上限（1–${HARD_SCENE_LIMITS.maxInstances}）`, current.maxInstances));
+    if (!Number.isFinite(total)) return;
+    const next = { maxInstances: Math.max(1, Math.min(HARD_SCENE_LIMITS.maxInstances, Math.floor(total))), maxPerCharacter: 1 };
+    localStorage.setItem(LIMIT_STORAGE_KEY, JSON.stringify(next));
+    sceneStore.limits = next; refresh();
+    const errors = validateScene(sceneStore.active, { limits: next });
+    elements.status.textContent = errors[0] || `实例限制已保存：每场景 ${next.maxInstances}；每个角色仅一个实例。`;
+  });
+  for (const name of SECTION_NAMES) { const option = document.createElement("option"); option.value = name; option.textContent = name; elements.assetSection.append(option); }
+  elements.assetFiles.addEventListener("change", () => handleAssetFiles(elements.assetFiles.files));
+  elements.newRoleFiles.addEventListener("change", () => handleAssetFiles(elements.newRoleFiles.files));
+  elements.assetDropZone.addEventListener("dragover", (event) => { event.preventDefault(); elements.assetDropZone.classList.add("is-dragging"); });
+  elements.assetDropZone.addEventListener("dragleave", () => elements.assetDropZone.classList.remove("is-dragging"));
+  elements.assetDropZone.addEventListener("drop", (event) => { event.preventDefault(); elements.assetDropZone.classList.remove("is-dragging"); handleAssetFiles(event.dataTransfer.files); });
+  elements.commitAssets.addEventListener("click", commitAssetImport);
+  elements.assetImportList.addEventListener("change", (event) => {
+    if (!event.target.matches("[data-asset-section]")) return;
+    const item = pendingAssets[Number(event.target.dataset.assetIndex)];
+    if (item) { item.section = event.target.value; refreshPendingCharacterManifest(); }
+  });
+  elements.assetImportList.addEventListener("click", (event) => {
+    if (!event.target.matches("[data-remove-asset]")) return;
+    pendingAssets.splice(Number(event.target.dataset.assetIndex), 1);
+    refreshPendingCharacterManifest();
+    renderAssetQueue();
+  });
+  elements.assetImportList.addEventListener("change", (event) => {
+    if (!event.target.matches("[data-asset-label]")) return;
+    const item = pendingAssets[Number(event.target.dataset.assetIndex)];
+    if (item) { item.label = event.target.value.trim() || item.file.name.replace(/\.[^.]+$/, ""); refreshPendingCharacterManifest(); }
+  });
+  refresh();
+}
+
+function renderAssetQueue() {
+  elements.assetImportList.replaceChildren();
+  for (const [index, item] of pendingAssets.entries()) {
+    const row = document.createElement("div"); row.className = "asset-import-row";
+    const targetName = pendingCharacterManifest?.name || characterRegistry.characters.find((character) => character.id === item.characterId)?.name || item.characterId;
+    const filename = document.createElement("span"); filename.textContent = `${targetName} · ${item.section}/${item.file.name}`;
+    const section = document.createElement("select"); section.setAttribute("aria-label", `为 ${item.file.name} 选择分区`);
+    for (const name of SECTION_NAMES) {
+      const option = document.createElement("option"); option.value = name; option.textContent = name; option.selected = item.section === name; section.append(option);
+    }
+    section.dataset.assetSection = "true"; section.dataset.assetIndex = String(index);
+    const label = document.createElement("input"); label.value = item.label; label.setAttribute("aria-label", `为 ${item.file.name} 设置动作名称`);
+    label.dataset.assetLabel = "true"; label.dataset.assetIndex = String(index);
+    const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "移除";
+    remove.dataset.removeAsset = "true"; remove.dataset.assetIndex = String(index);
+    row.append(filename, section, label, remove); elements.assetImportList.append(row);
+  }
+  elements.commitAssets.disabled = pendingAssets.length === 0;
+}
+
+async function filesFromInput(files) {
+  const result = [];
+  for (const file of files) {
+    if (/\.zip$/i.test(file.name)) {
+      if (!globalThis.JSZip) throw new Error("ZIP 解压组件未加载；请检查网络或直接拖入图片。 ");
+      const zip = await globalThis.JSZip.loadAsync(file, { checkCRC32: true });
+      for (const [path, entry] of Object.entries(zip.files)) {
+        if (entry.dir) continue;
+        const extension = path.slice(path.lastIndexOf(".")).toLowerCase();
+        if (!new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]).has(extension)) continue;
+        const blob = await entry.async("blob");
+        const safeName = path.split(/[\\/]/).at(-1);
+        const imageFile = new File([blob], safeName, { type: blob.type });
+        imageFile.archivePath = path;
+        result.push(imageFile);
+      }
+    } else if (/\.(png|jpe?g|webp|gif|avif)$/i.test(file.name)) {
+      if (file.webkitRelativePath) file.archivePath = file.webkitRelativePath;
+      result.push(file);
+    }
+  }
+  return result;
+}
+
+async function handleAssetFiles(files, forcedCharacterId = "") {
+  try {
+    const images = await filesFromInput(files);
+    const defaultSection = elements.assetSection.value || "Basic";
+    const selectedCharacterId = forcedCharacterId || elements.assetCharacter.value;
+    const newCharacter = forcedCharacterId ? null : inferNewCharacterPackage(images, characterRegistry.characters);
+    let planned;
+    if (newCharacter) {
+      if (characterRegistry.characters.some((character) => character.id.toLowerCase() === newCharacter.id.toLowerCase())) {
+        throw new Error(`角色文件夹“${newCharacter.name}”生成的 ID 已被占用，请先重命名文件夹。`);
+      }
+      planned = planAssetImport(images, { characterId: newCharacter.id, section: defaultSection });
+      if (pendingAssets.some((item) => item.characterId !== newCharacter.id)) throw new Error("请先完成当前素材队列，再导入另一个角色。");
+      pendingAssets.push(...planned);
+      pendingCharacterManifest = buildCharacterManifest({ ...newCharacter, assets: pendingAssets });
+      pendingAssets.forEach((item, index) => { item.stateId = pendingCharacterManifest.states[index].id; });
+      elements.status.textContent = `已识别新角色“${newCharacter.name}”，确认导入后会创建独立角色包。`;
+    } else {
+      validateArchiveTargets(images, { characters: characterRegistry.characters, targetCharacterId: selectedCharacterId });
+      planned = planAssetImport(images, { characterId: selectedCharacterId, section: defaultSection });
+      if (pendingAssets.some((item) => item.characterId !== selectedCharacterId)) throw new Error("请先完成当前素材队列，再导入另一个角色。");
+      pendingAssets.push(...planned);
+      if (pendingCharacterManifest) refreshPendingCharacterManifest();
+    }
+    renderAssetQueue();
+  } catch (error) {
+    elements.status.textContent = error.message;
+  }
+}
+
+function refreshPendingCharacterManifest() {
+  if (!pendingCharacterManifest) return;
+  if (pendingAssets.length === 0) { pendingCharacterManifest = null; return; }
+  const { id, name } = pendingCharacterManifest;
+  pendingCharacterManifest = buildCharacterManifest({ id, name, assets: pendingAssets });
+  pendingAssets.forEach((item, index) => { item.stateId = pendingCharacterManifest.states[index].id; });
+}
+
+async function commitAssetImport() {
+    elements.commitAssets.disabled = true;
+    const imported = [];
+    try {
+      const newCharacterId = pendingCharacterManifest?.id || "";
+      if (pendingCharacterManifest) {
+        const createResponse = await fetch("./api/characters/create", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ manifest: pendingCharacterManifest }),
+        });
+        const createResult = await createResponse.json();
+        if (!createResponse.ok) throw new Error(createResult.error || "新角色包创建失败。");
+      }
+      for (const item of pendingAssets) {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => reject(reader.error); reader.readAsDataURL(item.file);
+        });
+        const response = await fetch("./api/assets/import", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ characterId: item.characterId, stateId: item.stateId, section: item.section, label: item.label, fileName: item.file.name, data: dataUrl.split(",")[1] }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "素材保存失败。");
+        imported.push({ ...item, path: result.path, stateId: result.stateId });
+      }
+      await syncCharacterRegistry();
+      if (newCharacterId) navigateToManifest(`./characters/${newCharacterId}/character.json`);
+      else location.reload();
+    } catch (error) {
+      elements.status.textContent = error.message;
+      elements.commitAssets.disabled = pendingAssets.length === 0;
+    }
+}
+
+async function syncCharacterRegistry() {
+  const response = await fetch(`./api/characters/sync?v=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`角色目录同步失败：HTTP ${response.status}`);
+  const result = await response.json();
+  if (!result.ok) throw new Error(result.error || "角色目录同步失败。");
 }
 
 function renderModelOptions(providerId) {
@@ -541,10 +1001,12 @@ async function start() {
     renderEventControls();
     bindIntentSimulator();
     await bindCharacterTools();
+    bindSceneEditor();
     bindShortcutEditor();
     await loadModelOptions();
     bindChat();
     renderControls();
+    renderActionEditor();
     await renderSnapshot(stateManager.getSnapshot("initial"));
   } catch (error) {
     elements.label.textContent = "加载失败";

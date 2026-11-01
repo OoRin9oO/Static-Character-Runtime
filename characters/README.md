@@ -5,8 +5,10 @@
 ```text
 characters/<character-id>/
 ├── character.json
-└── assets/
-    └── 状态图片.png
+├── Basic/
+├── Emotion/
+├── Interact/
+└── Special/
 ```
 
 运行时不要求角色拥有固定动作。角色可以自行定义状态 ID、分组、名称和图片，只需满足清单格式。
@@ -28,7 +30,7 @@ characters/<character-id>/
 {
   "id": "idle",
   "label": "待机",
-  "image": "assets/idle.png"
+  "image": "Basic/idle.png"
 }
 ```
 
@@ -80,6 +82,30 @@ characters/<character-id>/
 - 使用 `/` 作为分隔符。
 - 不允许绝对路径、网址、反斜杠或 `../` 跳出角色目录。
 - 新增角色时不需要修改运行时核心代码，可通过 `?manifest=` 指定清单。
+
+## 图片素材建议
+
+- 推荐不同状态图片使用相同画布尺寸和分辨率，并采用透明背景，方便角色在同一舞台保持大小和站位一致。
+- 这只是推荐，不是限制。尺寸、分辨率或背景不同的图片也可以使用；可在清单的 `display` 或具体状态的 `display` 中调整缩放、锚点与偏移。
+- 推荐使用 PNG 或 WebP 透明图。JPEG 不支持透明背景，会以完整矩形背景显示；GIF、AVIF 等格式需以当前 Edge 的实际解码支持为准。
+- 保持图片扩展名与图像实际编码格式一致，避免浏览器无法显示。
+
+## 推荐素材目录
+
+```text
+characters/<character-id>/
+├── character.json
+├── Basic/
+├── Emotion/
+├── Interact/
+└── Special/
+```
+
+目录名称大小写不敏感。`Basic` 放基础状态，`Emotion` 放情绪动作，`Interact` 放问候、道歉等交互动作，`Special` 放休眠或特殊效果。图片文件名作为动作显示名称的默认值；角色包可自行扩展其他分区。
+
+导入器可以从 ZIP 或浏览器选中的角色文件夹识别分区。若压缩包/文件夹带一个未登记角色根目录，确认后会创建 `characters/<character-id>/`、生成 `character.json`，并写入 `characters/index.json`；若导入的是已登记角色，则素材归入该角色。包含多个未登记角色的导入会被拒绝。ZIP 中的路径必须经过安全校验，不能覆盖角色目录以外的文件。
+
+编辑器修改动作显示名称时，建议只更新 `character.json` 中对应状态的 `label`，图片文件名保持不变，以免破坏引用。用户仍可选择单独重命名图片。手动编辑 JSON 或移动文件后，需要刷新页面重新读取角色清单。
 
 ## 登记到角色选择器
 

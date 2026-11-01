@@ -176,7 +176,7 @@ export async function loadCharacterManifest(requestedUrl) {
     throw new Error("角色清单必须来自当前本地项目。");
   }
 
-  const response = await fetch(url);
+  const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`角色清单读取失败：HTTP ${response.status}`);
   }
@@ -190,6 +190,14 @@ export async function loadCharacterManifest(requestedUrl) {
 
   const states = validateCharacterManifest(manifest, url);
   return { manifest, url, states };
+}
+
+export function resolveRegisteredCharacterManifestUrl(character, pageUrl = window.location.href) {
+  if (!character || typeof character.manifest !== "string") {
+    throw new Error("角色目录项缺少 manifest 路径。");
+  }
+  const registryUrl = new URL("./characters/index.json", pageUrl);
+  return new URL(character.manifest, registryUrl);
 }
 
 export function resolveStateImageUrl(state, manifestUrl) {

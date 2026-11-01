@@ -1,6 +1,9 @@
 # Local source library (kept on this computer, never published)
 /github娘-表情/
 
+# User-provided role package; image rights are not part of this repository license
+/characters/deepdeep/
+
 # Windows metadata
 desktop.ini
 Thumbs.db

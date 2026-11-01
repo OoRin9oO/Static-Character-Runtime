@@ -185,11 +185,46 @@ h1 { margin: 0; font-size: clamp(1.7rem, 4vw, 2.5rem); }
   background: #a85ee8; color: #fff; cursor: pointer;
 }
 .workspace-panel small, .shortcut-panel p { display: block; margin: 8px 0 0; color: #777d91; font-size: .7rem; }
+.scene-toolbar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 8px 0; }
+.scene-toolbar label { grid-column: 1 / -1; }
+.scene-instances { display: grid; gap: 8px; margin-top: 10px; }
+.instance-card { padding: 9px; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; }
+.instance-card summary { cursor: pointer; color: #e7e8ef; font-size: .78rem; font-weight: 700; }
+.instance-controls, .transform-controls, .instance-move { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.instance-controls input[type="text"], .instance-controls input:not([type]), .instance-controls select {
+  min-width: 0; flex: 1; padding: 6px; border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px; background: #171a25; color: #f6f7fb;
+}
+.transform-controls label { flex: 1; color: #aeb2c3; font-size: .68rem; }
+.transform-controls input { width: 100%; margin-top: 4px; }
+.instance-move button { padding: 5px 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 7px; background: transparent; color: #c9ccda; cursor: pointer; }
+.scene-instance {
+  position: absolute; width: 38%; height: auto; max-height: 100%; object-fit: contain;
+  transform-origin: center center; pointer-events: auto; cursor: grab; touch-action: none;
+}
+body.live-mode .scene-instance { pointer-events: none; cursor: default; }
+body.scene-editor-mode .stage > .character-layer, body.scene-editor-mode .stage > .stage-glow { display: none !important; }
+body.scene-editor-mode .scene-instance { display: block !important; visibility: visible !important; opacity: 1 !important; }
 .shortcut-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .shortcut-list button {
   padding: 7px 10px; border: 1px solid rgba(199,125,255,.35); border-radius: 999px;
   background: rgba(199,125,255,.1); color: #e7e8ef; cursor: pointer;
 }
+.asset-panel { margin-top: 18px; padding: 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 13px; }
+.asset-panel h2 { margin: 0 0 10px; color: #c9ccda; font-size: .82rem; }
+.asset-targets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.asset-targets select, .asset-import-row input, .asset-import-row select {
+  min-width: 0; padding: 7px; border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px; background: #171a25; color: #f6f7fb;
+}
+.drop-zone { display: block; padding: 16px; border: 1px dashed rgba(199,125,255,.5); border-radius: 10px; color: #c9ccda; text-align: center; cursor: pointer; }
+.drop-zone input { display: block; width: 100%; margin-top: 8px; }
+.drop-zone.is-dragging { background: rgba(199,125,255,.12); }
+.asset-import-list { display: grid; gap: 6px; margin: 9px 0; }
+.asset-import-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(80px, 1fr) auto; gap: 5px; align-items: center; font-size: .7rem; }
+.asset-import-row span { overflow-wrap: anywhere; }
+.asset-import-row button { border: 0; background: transparent; color: #ffbd73; cursor: pointer; }
+.asset-panel > p { margin: 8px 0 0; color: #777d91; font-size: .7rem; }
 
 .chat-panel { margin-top: 18px; }
 .chat-panel h2 { margin: 0 0 9px; color: #c9ccda; font-size: .82rem; }
@@ -341,5 +376,7 @@ body.live-mode .exit-live-mode:hover, body.live-mode .exit-live-mode:focus-visib
   .stage-panel { min-height: 68vh; }
   .control-panel { max-height: none; }
   .model-picker { grid-template-columns: 1fr; }
-  .manifest-loader, .shortcut-editor { grid-template-columns: 1fr; }
+  .manifest-loader, .shortcut-editor, .asset-targets { grid-template-columns: 1fr; }
+  .scene-toolbar { grid-template-columns: 1fr; }
+  .asset-import-row { grid-template-columns: 1fr 1fr; }
 }

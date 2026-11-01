@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Static Character Runtime · V0.1</title>
     <link rel="stylesheet" href="./styles.css" />
+    <script src="./runtime/vendor-jszip.min.js"></script>
   </head>
   <body>
     <main class="app-shell">
@@ -35,7 +36,22 @@
         </header>
         <section class="workspace-panel">
           <h2>编辑测试台</h2>
+          <div class="scene-toolbar">
+            <label>场景 <select id="scene-picker"></select></label>
+            <button id="new-scene" class="secondary-button" type="button">新建</button>
+          </div>
+          <div class="scene-toolbar">
+            <button id="rename-scene" class="secondary-button" type="button">重命名</button>
+            <button id="delete-scene" class="secondary-button" type="button">删除场景</button>
+            <button id="duplicate-scene" class="secondary-button" type="button">复制场景</button>
+          </div>
           <label>当前角色 <select id="character-picker" aria-label="选择角色"></select></label>
+          <div class="scene-toolbar">
+            <button id="add-instance" class="secondary-button" type="button">添加角色实例</button>
+            <button id="edit-instance-limits" class="secondary-button" type="button">场景实例上限</button>
+          </div>
+          <small>同一角色每个场景仅保留一个实例；可直接拖动立绘，数字框与方向键用于微调位置。</small>
+          <div id="scene-instances" class="scene-instances"></div>
           <div class="manifest-loader">
             <input id="manifest-input" type="text" placeholder="角色清单路径，例如 ./characters/demo/character.json" />
             <button id="load-manifest" class="secondary-button" type="button">加载角色</button>
@@ -118,6 +134,28 @@
           <div id="shortcut-list" class="shortcut-list"></div>
           <p>快捷项保存在本浏览器，不修改角色包；双击快捷项可移除。</p>
         </section>
+        <section class="asset-panel">
+          <h2>素材与动作管理</h2>
+          <label class="drop-zone" id="asset-drop-zone">
+            拖入图片，或选择图片 / ZIP 包
+            <input id="asset-files" type="file" accept="image/*,.zip,application/zip" multiple />
+          </label>
+          <label class="drop-zone role-folder-zone">
+            导入新角色文件夹（包含 Basic / Emotion / Interact / Special）
+            <input id="new-role-files" type="file" webkitdirectory directory multiple accept="image/*" />
+          </label>
+          <div class="asset-targets">
+            <select id="asset-character" aria-label="素材目标角色"></select>
+            <select id="asset-section" aria-label="素材目标分区"></select>
+          </div>
+          <div id="asset-import-list" class="asset-import-list"></div>
+          <button id="commit-assets" class="secondary-button" type="button" disabled>确认导入</button>
+          <p>导入内容先预览并确认角色与分区，再写入本地角色目录。</p>
+        </section>
+        <details id="action-editor" class="asset-panel">
+          <summary>动作名称编辑器</summary>
+          <div id="action-editor-list" class="asset-import-list"></div>
+        </details>
         <div id="state-groups" class="state-groups"></div>
         <footer>
           <span id="manifest-path"></span>

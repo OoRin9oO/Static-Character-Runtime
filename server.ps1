@@ -1,8 +1,8 @@
-param([switch]$NoBrowser, [switch]$PromptForApiKey)
+param([switch]$NoBrowser, [switch]$PromptForApiKey, [string]$WorkspaceRoot)
 
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root = if ($WorkspaceRoot) { $WorkspaceRoot } elseif ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $Address = [Net.IPAddress]::Loopback
 $PreferredPort = 4173
 $Port = $null
@@ -22,6 +22,12 @@ $MimeTypes = @{
     ".js"   = "text/javascript; charset=utf-8"
     ".json" = "application/json; charset=utf-8"
     ".png"  = "image/png"
+    ".jpg"  = "image/jpeg"
+    ".jpeg" = "image/jpeg"
+    ".webp" = "image/webp"
+    ".gif"  = "image/gif"
+    ".avif" = "image/avif"
+    ".zip"  = "application/zip"
 }
 
 function Send-Response {
@@ -72,13 +78,17 @@ function Read-HttpRequest {
     $RequestParts = $Lines[0].Split(" ")
     if ($RequestParts.Count -lt 2) { throw "Invalid request line." }
 
+    $Method = $RequestParts[0]
+    $Target = $RequestParts[1]
+    $ContentType = ""
     $ContentLength = 0
     foreach ($Line in $Lines) {
         if ($Line -match '^Content-Length:\s*(\d+)\s*$') {
             $ContentLength = [int]$Matches[1]
         }
+        if ($Line -match '^Content-Type:\s*(.+?)\s*$') { $ContentType = $Matches[1] }
     }
-    if ($ContentLength -gt 65536) { throw "Request body is too large." }
+    if (($Method -eq "POST" -and $Target -eq "/api/assets/import" -and $ContentLength -gt 22020096) -or ($Method -eq "POST" -and $Target -ne "/api/assets/import" -and $ContentLength -gt 1048576)) { throw "Request body is too large." }
 
     $BodyBytes = [byte[]]::new($ContentLength)
     $Offset = 0
@@ -89,8 +99,9 @@ function Read-HttpRequest {
     }
 
     return [pscustomobject]@{
-        Method = $RequestParts[0]
-        Target = $RequestParts[1]
+        Method = $Method
+        Target = $Target
+        ContentType = $ContentType
         Body = [Text.Encoding]::UTF8.GetString($BodyBytes)
     }
 }
@@ -333,6 +344,208 @@ try {
                     }
                 })
                 Send-Json $Stream 200 "OK" @{ defaultProvider = [string]$AiConfig.defaultProvider; providers = $PublicProviders }
+                continue
+            }
+            if ($Request.Method -eq "POST" -and $RequestPath -eq "/api/characters/create") {
+                try {
+                    if ($Request.ContentType -notmatch '^application/json') { throw "Content-Type must be application/json." }
+                    $Create = $Request.Body | ConvertFrom-Json
+                    $NewManifest = $Create.manifest
+                    $CharacterId = [string]$NewManifest.id
+                    if ($CharacterId -notmatch '^[a-zA-Z][a-zA-Z0-9_-]{0,63}$') { throw "角色 ID 格式无效。" }
+                    if ([string]::IsNullOrWhiteSpace([string]$NewManifest.name) -or ([string]$NewManifest.name).Length -gt 120) { throw "角色名称不能为空，且最多 120 个字符。" }
+                    if ([int]$NewManifest.schemaVersion -ne 1 -or @($NewManifest.states).Count -lt 1 -or @($NewManifest.states).Count -gt 250) { throw "角色清单版本或状态数量无效。" }
+                    $StateIds = @{}
+                    foreach ($State in $NewManifest.states) {
+                        $StateId = [string]$State.id
+                        if ($StateId -notmatch '^[a-zA-Z][a-zA-Z0-9_-]{0,63}$' -or $StateIds.ContainsKey($StateId)) { throw "状态 ID 无效或重复。" }
+                        $StateIds[$StateId] = $true
+                        if ([string]$State.label -notmatch '\S' -or [string]$State.group -notin @("Basic", "Emotion", "Interact", "Special")) { throw "状态名称或分区无效。" }
+                        if ([string]$State.image -notmatch '^(Basic|Emotion|Interact|Special)/[^/\\]+\.(png|jpg|jpeg|webp|gif|avif)$') { throw "状态图片路径不安全或格式不支持。" }
+                    }
+                    if (-not $StateIds.ContainsKey([string]$NewManifest.defaultState)) { throw "默认动作必须存在于状态列表中。" }
+                    $CharacterRoot = Join-Path (Join-Path $Root "characters") $CharacterId
+                    if (Test-Path -LiteralPath $CharacterRoot) {
+                        $ExistingManifestPath = Join-Path $CharacterRoot "character.json"
+                        if (-not (Test-Path -LiteralPath $ExistingManifestPath -PathType Leaf)) { throw "角色目录已存在，但不是可恢复的导入包：$CharacterId" }
+                        $ExistingManifest = Get-Content -LiteralPath $ExistingManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                        if ([string]$ExistingManifest.id -ne $CharacterId -or [string]$ExistingManifest.metadata.packageImportSource -ne "folder-or-zip") { throw "角色目录已存在且并非由本次导入流程创建：$CharacterId" }
+                    } else {
+                        $null = New-Item -ItemType Directory -Path $CharacterRoot
+                    }
+                    $ManifestPath = Join-Path $CharacterRoot "character.json"
+                    [IO.File]::WriteAllText($ManifestPath, ($NewManifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+                    $RegistryPath = Join-Path (Join-Path $Root "characters") "index.json"
+                    $Registry = Get-Content -LiteralPath $RegistryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $Registry.characters = @($Registry.characters | Where-Object { $_.id -ne $CharacterId }) + @(@{ id = $CharacterId; name = [string]$NewManifest.name; manifest = "./$CharacterId/character.json" })
+                    if ([string]::IsNullOrWhiteSpace([string]$Registry.defaultCharacter)) { $Registry.defaultCharacter = $CharacterId }
+                    [IO.File]::WriteAllText($RegistryPath, ($Registry | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+                    Send-Json $Stream 201 "Created" @{ ok = $true; id = $CharacterId; manifest = "./characters/$CharacterId/character.json" }
+                } catch {
+                    Send-Json $Stream 400 "Bad Request" @{ error = $_.Exception.Message }
+                }
+                continue
+            }
+            if ($Request.Method -eq "POST" -and $RequestPath -eq "/api/assets/import") {
+                try {
+                    if ($Request.ContentType -notmatch '^application/json') { throw "Content-Type must be application/json." }
+                    $Import = $Request.Body | ConvertFrom-Json
+                    $CharacterId = [string]$Import.characterId
+                    if ($CharacterId -notmatch '^[a-zA-Z0-9_-]{1,64}$') { throw "Invalid character id." }
+                    $Section = [string]$Import.section
+                    if ($Section -notin @("Basic", "Emotion", "Interact", "Special")) { throw "Invalid section." }
+                    if ([string]$Import.label -notmatch '\S' -or ([string]$Import.label).Length -gt 120) { throw "Action name is required and must be at most 120 characters." }
+                    $FileName = [string]$Import.fileName
+                    $Extension = [IO.Path]::GetExtension($FileName).ToLowerInvariant()
+                    if ($Extension -notin @(".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif")) { throw "Unsupported image format." }
+                    $Base64 = [string]$Import.data
+                    if ($Base64.Length -gt 20971520) { throw "Image is too large." }
+                    if ($Base64 -notmatch '^[A-Za-z0-9+/]*={0,2}$') { throw "Image data is invalid." }
+                    $Bytes = [Convert]::FromBase64String($Base64)
+                    if ($Bytes.Length -gt 15MB) { throw "Image is too large." }
+                    $CharacterRoot = Join-Path $Root ("characters\" + $CharacterId)
+                    $ManifestPath = Join-Path $CharacterRoot "character.json"
+                    if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) { throw "Character package not found." }
+                    $TargetDirectory = Join-Path $CharacterRoot $Section
+                    $null = New-Item -ItemType Directory -Force -Path $TargetDirectory
+                    $SafeName = [IO.Path]::GetFileName($FileName)
+                    $TargetPath = Join-Path $TargetDirectory $SafeName
+                    $SignatureValid = switch ($Extension) {
+                        ".png" { $Bytes.Length -ge 8 -and $Bytes[0] -eq 137 -and $Bytes[1] -eq 80 -and $Bytes[2] -eq 78 -and $Bytes[3] -eq 71 }
+                        { $_ -in ".jpg", ".jpeg" } { $Bytes.Length -ge 3 -and $Bytes[0] -eq 255 -and $Bytes[1] -eq 216 -and $Bytes[2] -eq 255 }
+                        ".webp" { $Bytes.Length -ge 12 -and [Text.Encoding]::ASCII.GetString($Bytes, 0, 4) -eq "RIFF" -and [Text.Encoding]::ASCII.GetString($Bytes, 8, 4) -eq "WEBP" }
+                        ".gif" { $Bytes.Length -ge 6 -and [Text.Encoding]::ASCII.GetString($Bytes, 0, 3) -eq "GIF" }
+                        ".avif" { $Bytes.Length -ge 12 -and [Text.Encoding]::ASCII.GetString($Bytes, 4, 4) -eq "ftyp" }
+                        default { $false }
+                    }
+                    if (-not $SignatureValid) { throw "Image content does not match the file extension." }
+                    $WriteImage = $true
+                    if (Test-Path -LiteralPath $TargetPath -PathType Leaf) {
+                        $Hasher = [Security.Cryptography.SHA256]::Create()
+                        try {
+                            $ExistingHash = [Convert]::ToBase64String($Hasher.ComputeHash([IO.File]::ReadAllBytes($TargetPath)))
+                            $IncomingHash = [Convert]::ToBase64String($Hasher.ComputeHash($Bytes))
+                            if ($ExistingHash -ne $IncomingHash) { throw "A different file with this name already exists." }
+                            $WriteImage = $false
+                        } finally { $Hasher.Dispose() }
+                    }
+                    $ImagePath = "$Section/$SafeName"
+                    $Manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $RequestedStateId = [string]$Import.stateId
+                    $ExistingState = $null
+                    if ($RequestedStateId) {
+                        if ($RequestedStateId -notmatch '^[a-zA-Z][a-zA-Z0-9_-]{0,63}$') { throw "State id is invalid." }
+                        $ExistingState = @($Manifest.states | Where-Object { $_.id -eq $RequestedStateId }) | Select-Object -First 1
+                        if (-not $ExistingState -or [string]$ExistingState.image -ne $ImagePath) { throw "预设状态与导入图片不匹配。" }
+                        $ExistingState.label = [string]$Import.label.Trim()
+                        $ExistingState.group = $Section
+                        $StateId = $RequestedStateId
+                    } else {
+                        $IdBase = ([string]$Import.label).ToLowerInvariant() -replace '[^a-z0-9_-]+', '_'
+                        $IdBase = $IdBase -replace '_+', '_' -replace '_+$', ''
+                        if ($IdBase -notmatch '^[a-z]') { $IdBase = "state_$($Manifest.states.Count + 1)_$IdBase" }
+                        if ($IdBase.Length -gt 64) { $IdBase = $IdBase.Substring(0, 64).TrimEnd('_', '-') }
+                        $StateId = $IdBase
+                        $Suffix = 2
+                        while (@($Manifest.states | Where-Object { $_.id -eq $StateId }).Count -gt 0) { $StateId = "${IdBase}_$Suffix"; $Suffix++ }
+                        $State = [pscustomobject]@{ id = $StateId; label = [string]$Import.label.Trim(); group = $Section; image = $ImagePath }
+                        $Manifest.states = @($Manifest.states) + @($State)
+                    }
+                    $ExistingGroups = @{}
+                    if ($Manifest.groups) { foreach ($GroupProperty in $Manifest.groups.PSObject.Properties) { $ExistingGroups[$GroupProperty.Name] = $GroupProperty.Value } }
+                    $MatchingGroup = @($ExistingGroups.Keys | Where-Object { $_.ToLowerInvariant() -eq $Section.ToLowerInvariant() } | Select-Object -First 1)
+                    if ($MatchingGroup.Count -gt 0) { $ExistingGroups.Remove($MatchingGroup[0]) }
+                    $ExistingGroups[$Section] = $Section
+                    $Manifest.groups = $ExistingGroups
+                    $ManifestJson = $Manifest | ConvertTo-Json -Depth 20
+                    $RegistryPath = Join-Path (Join-Path $Root "characters") "index.json"
+                    $CharacterDirectories = Get-ChildItem -LiteralPath (Join-Path $Root "characters") -Directory | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "character.json") }
+                    $Entries = @($CharacterDirectories | ForEach-Object {
+                        $EntryManifest = Get-Content -LiteralPath (Join-Path $_.FullName "character.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                        @{ id = [string]$EntryManifest.id; name = [string]$EntryManifest.name; manifest = "./$($_.Name)/character.json" }
+                    })
+                    $DefaultCharacter = if ($Entries.Count -gt 0) { $Entries[0].id } else { "" }
+                    $Registry = @{ schemaVersion = 1; defaultCharacter = $DefaultCharacter; characters = $Entries }
+                    $RegistryJson = $Registry | ConvertTo-Json -Depth 8
+                    $TempManifestPath = "$ManifestPath.tmp"
+                    $TempRegistryPath = "$RegistryPath.tmp"
+                    [IO.File]::WriteAllText($TempManifestPath, $ManifestJson, [Text.UTF8Encoding]::new($false))
+                    [IO.File]::WriteAllText($TempRegistryPath, $RegistryJson, [Text.UTF8Encoding]::new($false))
+                    if ($WriteImage) { [IO.File]::WriteAllBytes($TargetPath, $Bytes) }
+                    Move-Item -LiteralPath $TempManifestPath -Destination $ManifestPath -Force
+                    Move-Item -LiteralPath $TempRegistryPath -Destination $RegistryPath -Force
+                    [IO.File]::WriteAllText($RegistryPath, $RegistryJson, [Text.UTF8Encoding]::new($false))
+                    Send-Json $Stream 200 "OK" @{ ok = $true; path = $ImagePath; stateId = $StateId; label = [string]$Import.label }
+                } catch {
+                    Send-Json $Stream 400 "Bad Request" @{ error = $_.Exception.Message }
+                }
+                continue
+            }
+            if ($Request.Method -eq "POST" -and $RequestPath -eq "/api/assets/update-manifest") {
+                try {
+                    if ($Request.ContentType -notmatch '^application/json') { throw "Content-Type must be application/json." }
+                    $Update = $Request.Body | ConvertFrom-Json
+                    $CharacterId = [string]$Update.characterId
+                    if ($CharacterId -notmatch '^[a-zA-Z0-9_-]{1,64}$') { throw "Invalid character id." }
+                    $CharacterRoot = Join-Path $Root ("characters\" + $CharacterId)
+                    $ManifestPath = Join-Path $CharacterRoot "character.json"
+                    if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) { throw "Character package not found." }
+                    if ([string]$Update.manifest.id -ne $CharacterId -or [int]$Update.manifest.schemaVersion -ne 1) { throw "Manifest identity or schema is invalid." }
+                    if (@($Update.manifest.states).Count -gt 250) { throw "A character package may contain at most 250 states." }
+                    $SeenStateIds = @{}
+                    foreach ($State in $Update.manifest.states) {
+                        if ([string]$State.id -notmatch '^[a-zA-Z][a-zA-Z0-9_-]{0,63}$') { throw "State id is invalid." }
+                        if ($SeenStateIds.ContainsKey([string]$State.id)) { throw "Duplicate state id." }
+                        $SeenStateIds[[string]$State.id] = $true
+                        $ImagePath = [string]$State.image
+                        if ($ImagePath -match '(^/|\\|:|(^|/)\.\.(?:/|$))') { throw "State image path is unsafe." }
+                    }
+                    if (-not $SeenStateIds.ContainsKey([string]$Update.manifest.defaultState)) { throw "Default state does not exist." }
+                    $Json = $Update.manifest | ConvertTo-Json -Depth 20
+                    [IO.File]::WriteAllText($ManifestPath, $Json, [Text.UTF8Encoding]::new($false))
+                    Send-Json $Stream 200 "OK" @{ ok = $true }
+                } catch {
+                    Send-Json $Stream 400 "Bad Request" @{ error = $_.Exception.Message }
+                }
+                continue
+            }
+            if ($Request.Method -eq "GET" -and $RequestPath -eq "/api/characters/sync") {
+                try {
+                    $RegistryPath = Join-Path $Root "characters\index.json"
+                    $CharacterDirectories = Get-ChildItem -LiteralPath (Join-Path $Root "characters") -Directory | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "character.json") }
+                    $Entries = @($CharacterDirectories | ForEach-Object {
+                        $Manifest = Get-Content -LiteralPath (Join-Path $_.FullName "character.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                        @{ id = [string]$Manifest.id; name = [string]$Manifest.name; manifest = "./$($_.Name)/character.json" }
+                    })
+                    $DefaultCharacter = if ($Entries.Count -gt 0) { $Entries[0].id } else { "" }
+                    $Registry = @{ schemaVersion = 1; defaultCharacter = $DefaultCharacter; characters = $Entries }
+                    $RegistryJson = $Registry | ConvertTo-Json -Depth 8
+                    [IO.File]::WriteAllText($RegistryPath, $RegistryJson, [Text.UTF8Encoding]::new($false))
+                    Send-Json $Stream 200 "OK" @{ ok = $true; count = $Entries.Count }
+                } catch {
+                    Send-Json $Stream 500 "Internal Server Error" @{ ok = $false; error = "角色目录无法同步。" }
+                }
+                continue
+            }
+            if ($Request.Method -eq "POST" -and $RequestPath -eq "/api/assets/rename") {
+                try {
+                    if ($Request.ContentType -notmatch '^application/json') { throw "Content-Type must be application/json." }
+                    $Rename = $Request.Body | ConvertFrom-Json
+                    $CharacterId = [string]$Rename.characterId
+                    if ($CharacterId -notmatch '^[a-zA-Z0-9_-]{1,64}$') { throw "Invalid character id." }
+                    $ManifestPath = Join-Path (Join-Path $Root ("characters\" + $CharacterId)) "character.json"
+                    if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) { throw "Character package not found." }
+                    $Manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $State = @($Manifest.states | Where-Object { $_.id -eq [string]$Rename.stateId }) | Select-Object -First 1
+                    if (-not $State) { throw "State not found." }
+                    $NewLabel = [string]$Rename.label
+                    if ([string]::IsNullOrWhiteSpace($NewLabel) -or $NewLabel.Length -gt 120) { throw "Action name is required and must be at most 120 characters." }
+                    $State.label = $NewLabel.Trim()
+                    [IO.File]::WriteAllText($ManifestPath, ($Manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+                    Send-Json $Stream 200 "OK" @{ ok = $true; label = $State.label }
+                } catch {
+                    Send-Json $Stream 400 "Bad Request" @{ error = $_.Exception.Message }
+                }
                 continue
             }
             if ($Request.Method -ne "GET") {
