@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Static Character Runtime · V0.1</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="stage-panel" aria-label="角色展示区">
+        <div class="stage">
+          <div class="stage-glow"></div>
+          <img class="character-layer" alt="" />
+          <img class="character-layer" alt="" />
+        </div>
+        <div class="current-card">
+          <span class="eyebrow">当前状态</span>
+          <strong id="current-label">正在加载……</strong>
+          <code id="current-id">loading</code>
+          <p id="current-description">正在读取角色清单。</p>
+        </div>
+      </section>
+
+      <aside class="control-panel">
+        <header>
+          <p class="eyebrow">Static Character Runtime · V0.1</p>
+          <h1 id="character-name">角色加载器</h1>
+          <p class="intro">从角色清单生成状态按钮，并在完整立绘之间平滑切换。</p>
+        </header>
+        <div id="status-message" class="status-message" role="status"></div>
+        <div id="state-groups" class="state-groups"></div>
+        <footer>
+          <span id="manifest-path"></span>
+        </footer>
+      </aside>
+    </main>
+    <script src="./app.js" defer></script>
+  </body>
+</html>

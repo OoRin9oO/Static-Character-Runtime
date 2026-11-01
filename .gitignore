@@ -1,0 +1,31 @@
+# Local source library (kept on this computer, never published)
+/github娘-表情/
+
+# Windows metadata
+desktop.ini
+Thumbs.db
+
+# Archives and backups
+*.zip
+*.7z
+*.rar
+*.bak
+*.backup
+*~
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
+temp/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store

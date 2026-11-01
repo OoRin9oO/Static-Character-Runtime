@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "github-girl",
+  "name": "GitHub娘",
+  "version": "0.1.0",
+  "defaultState": "idle",
+  "canvas": { "width": 1024, "height": 1536 },
+  "transition": { "type": "crossfade", "durationMs": 220 },
+  "groups": {
+    "basic": "基础工作状态",
+    "emotion": "情绪状态",
+    "interaction": "交互动作",
+    "special": "特殊状态"
+  },
+  "states": [
+    { "id": "idle", "label": "待机", "group": "basic", "image": "assets/待机闭嘴.png", "description": "默认的安静待机状态。" },
+    { "id": "talking", "label": "说话", "group": "basic", "image": "assets/待机张嘴.png", "description": "角色正在回答或讲话。" },
+    { "id": "thinking", "label": "思考", "group": "basic", "image": "assets/待机思考.png", "description": "角色正在分析问题。" },
+    { "id": "listening", "label": "倾听", "group": "basic", "image": "assets/我正在听哦.png", "description": "认真听取用户输入。" },
+    { "id": "working", "label": "工作中", "group": "basic", "image": "assets/工作中.png", "description": "正在执行任务或处理文件。" },
+    { "id": "happy", "label": "开心", "group": "emotion", "image": "assets/捂嘴笑.png", "description": "轻松、开心地回应。" },
+    { "id": "proud", "label": "骄傲", "group": "emotion", "image": "assets/叉腰骄傲.png", "description": "对成果感到自豪。" },
+    { "id": "shy", "label": "害羞", "group": "emotion", "image": "assets/才-才没有呢！.png", "description": "害羞或口是心非。" },
+    { "id": "confused", "label": "疑惑", "group": "emotion", "image": "assets/我有点疑惑.png", "description": "对当前内容存在疑问。" },
+    { "id": "requirements_unclear", "label": "没理解要求", "group": "emotion", "image": "assets/我没能理解这个工作要求.png", "description": "无法确定任务要求，需要进一步说明。" },
+    { "id": "sad", "label": "坏消息", "group": "emotion", "image": "assets/人生无望-我很抱歉-真是个坏消息.png", "description": "表达遗憾、失落或坏消息。" },
+    { "id": "surprised", "label": "惊讶", "group": "emotion", "image": "assets/惊讶捂嘴.png", "description": "遇到了意料之外的情况。" },
+    { "id": "surprised_glow", "label": "惊讶·辉光", "group": "emotion", "image": "assets/有些惊讶-辉光版.png", "description": "带全画布辉光的强烈惊讶状态。" },
+    { "id": "angry", "label": "生气", "group": "emotion", "image": "assets/我真得揍你了.png", "description": "明显的不满或生气。" },
+    { "id": "teasing_angry", "label": "你这个家伙", "group": "emotion", "image": "assets/你这个家伙.png", "description": "带玩笑意味的责怪。" },
+    { "id": "greeting", "label": "来咯", "group": "interaction", "image": "assets/嗨嗨嗨-来咯.png", "description": "出现、欢迎或打招呼。" },
+    { "id": "apologizing", "label": "道歉", "group": "interaction", "image": "assets/sorry啦.png", "description": "简短地表达歉意。" },
+    { "id": "deep_apology", "label": "认真道歉", "group": "interaction", "image": "assets/弯腰抱歉求原谅咯.png", "description": "更郑重地道歉并请求原谅。" },
+    { "id": "insight", "label": "想到办法了", "group": "interaction", "image": "assets/思考结果出来了啦.png", "description": "思考完成，得出了结果。" },
+    { "id": "sleeping", "label": "休眠", "group": "special", "image": "assets/ZZZ休眠啦.png", "description": "长时间待机或进入休息状态。" }
+  ]
+}
