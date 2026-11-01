@@ -39,11 +39,14 @@ http://127.0.0.1:4173/?manifest=./characters/新角色/character.json
 - 固定舞台比例，兼容素材之间 1 像素的画布差异。
 - 图片或状态不存在时回退到默认待机状态。
 - 不绑定 GitHub娘，其他角色可以使用同一运行时。
+- 支持基础状态、临时覆盖、优先级、持续时间和自动恢复。
+- 支持按角色或单个状态调整缩放、锚点和偏移。
 
 ## 项目结构
 
 ```text
 runtime/character-loader.js       角色清单读取、验证与图片预加载
+runtime/state-manager.js          基础状态、临时覆盖、优先级与自动恢复
 characters/<character-id>/        独立角色包
 app.js                            页面协调与控制面板
 ```

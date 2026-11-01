@@ -23,6 +23,47 @@ function validateImagePath(imagePath, manifestUrl, stateId) {
   }
 }
 
+function validateDisplay(display, field) {
+  if (display === undefined) return;
+  if (!display || typeof display !== "object" || Array.isArray(display)) {
+    throw new Error(`${field} 必须是对象。`);
+  }
+
+  const limits = {
+    scale: [0.1, 3],
+    anchorX: [0, 100],
+    anchorY: [0, 100],
+    offsetX: [-2000, 2000],
+    offsetY: [-2000, 2000],
+  };
+  for (const [name, [min, max]] of Object.entries(limits)) {
+    if (display[name] === undefined) continue;
+    const value = display[name];
+    if (!Number.isFinite(value) || value < min || value > max) {
+      throw new Error(`${field}.${name} 必须是 ${min} 到 ${max} 之间的数字。`);
+    }
+  }
+}
+
+function validateBehavior(behavior, stateId) {
+  if (behavior === undefined) return;
+  if (!behavior || typeof behavior !== "object" || Array.isArray(behavior)) {
+    throw new Error(`states.${stateId}.behavior 必须是对象。`);
+  }
+  if (behavior.mode !== "base" && behavior.mode !== "override") {
+    throw new Error(`states.${stateId}.behavior.mode 必须是 base 或 override。`);
+  }
+  if (behavior.priority !== undefined && (!Number.isFinite(behavior.priority) || behavior.priority < 0)) {
+    throw new Error(`states.${stateId}.behavior.priority 必须是非负数字。`);
+  }
+  if (
+    behavior.durationMs !== undefined &&
+    (!Number.isFinite(behavior.durationMs) || behavior.durationMs < 0 || behavior.durationMs > 60000)
+  ) {
+    throw new Error(`states.${stateId}.behavior.durationMs 必须是 0 到 60000 之间的数字。`);
+  }
+}
+
 function validateOptionalSettings(manifest) {
   if (manifest.canvas !== undefined) {
     const { width, height } = manifest.canvas || {};
@@ -48,6 +89,8 @@ function validateOptionalSettings(manifest) {
       requireText(label, `groups.${groupId}`);
     }
   }
+
+  validateDisplay(manifest.display, "display");
 }
 
 export function validateCharacterManifest(manifest, manifestUrl) {
@@ -81,6 +124,8 @@ export function validateCharacterManifest(manifest, manifestUrl) {
     if (state.description !== undefined && typeof state.description !== "string") {
       throw new Error(`states.${state.id}.description 必须是文本。`);
     }
+    validateDisplay(state.display, `states.${state.id}.display`);
+    validateBehavior(state.behavior, state.id);
     if (!/^[a-z][a-z0-9_-]*$/i.test(state.id)) {
       throw new Error(`状态 ID“${state.id}”只能包含英文字母、数字、下划线和连字符。`);
     }

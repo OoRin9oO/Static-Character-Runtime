@@ -19,6 +19,10 @@
           <strong id="current-label">正在加载……</strong>
           <code id="current-id">loading</code>
           <p id="current-description">正在读取角色清单。</p>
+          <div class="state-details">
+            <span>基础：<code id="base-state">-</code></span>
+            <span>覆盖：<code id="override-state">无</code></span>
+          </div>
         </div>
       </section>
 
@@ -29,6 +33,7 @@
           <p class="intro">从角色清单生成状态按钮，并在完整立绘之间平滑切换。</p>
         </header>
         <div id="status-message" class="status-message" role="status"></div>
+        <button id="clear-overrides" class="secondary-button" type="button">清除临时状态</button>
         <div id="state-groups" class="state-groups"></div>
         <footer>
           <span id="manifest-path"></span>

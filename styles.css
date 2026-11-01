@@ -70,16 +70,15 @@ button { font: inherit; }
   object-fit: contain;
   object-position: 50% 50%;
   opacity: 0;
-  transform: scale(.992) translateY(4px);
-  transition:
-    opacity var(--transition-ms) ease,
-    transform var(--transition-ms) ease;
+  transform:
+    translate(var(--character-offset-x, 0px), var(--character-offset-y, 0px))
+    scale(var(--character-scale, 1));
+  transition: opacity var(--transition-ms) ease;
   filter: drop-shadow(0 22px 34px rgba(0,0,0,.35));
 }
 
 .character-layer.is-visible {
   opacity: 1;
-  transform: scale(1) translateY(0);
 }
 
 .current-card {
@@ -97,6 +96,8 @@ button { font: inherit; }
 .current-card strong { margin-right: 8px; font-size: 1.12rem; }
 .current-card code { color: #d6a7ff; }
 .current-card p { margin: 6px 0 0; color: #aeb2c3; font-size: .9rem; }
+.state-details { display: flex; gap: 16px; margin-top: 8px; color: #8f94a7; font-size: .75rem; }
+.state-details code { color: #b9bdd0; }
 
 .control-panel {
   padding: 28px;
@@ -123,6 +124,16 @@ h1 { margin: 0; font-size: clamp(1.7rem, 4vw, 2.5rem); }
   color: #ffbd73;
   font-size: .88rem;
 }
+
+.secondary-button {
+  padding: 8px 12px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 11px;
+  background: transparent;
+  color: #bfc3d2;
+  cursor: pointer;
+}
+.secondary-button:hover { background: rgba(255,255,255,.06); }
 
 .state-group { margin-top: 22px; }
 .state-group h2 { margin: 0 0 10px; color: #c9ccda; font-size: .82rem; }

@@ -34,15 +34,28 @@ characters/<character-id>/
 
 可选字段包括 `group` 和 `description`。状态数量和名称均可自定义。
 
+状态还可以声明表现方式：
+
+```json
+"behavior": { "mode": "override", "priority": 80, "durationMs": 2500 }
+```
+
+- `base`：长期基础状态。
+- `override`：临时覆盖状态，到期后恢复基础状态。
+- 同时存在多个覆盖状态时，优先级更高者显示；同优先级使用最新状态。
+
 ## 可选配置
 
 ```json
 {
   "canvas": { "width": 1024, "height": 1536 },
+  "display": { "scale": 1, "anchorX": 50, "anchorY": 50, "offsetX": 0, "offsetY": 0 },
   "transition": { "type": "crossfade", "durationMs": 220 },
   "groups": { "basic": "基础状态" }
 }
 ```
+
+`display` 可以放在角色清单顶层作为默认值，也可以放在单个状态中覆盖，用于修正不同图片的缩放、锚点和像素偏移。
 
 ## 路径规则
 
