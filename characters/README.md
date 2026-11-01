@@ -80,3 +80,14 @@ characters/<character-id>/
 - 使用 `/` 作为分隔符。
 - 不允许绝对路径、网址、反斜杠或 `../` 跳出角色目录。
 - 新增角色时不需要修改运行时核心代码，可通过 `?manifest=` 指定清单。
+
+## 登记到角色选择器
+
+素材由角色包作者自行提供。把完整角色目录放入 `characters/` 后，在
+`characters/index.json` 的 `characters` 数组增加一项即可出现在编辑测试台：
+
+```json
+{ "id": "demo", "name": "示例角色", "manifest": "./demo/character.json" }
+```
+
+角色包之间互不引用素材。仓库维护者可以只提交清单示例，不必代为托管第三方素材。

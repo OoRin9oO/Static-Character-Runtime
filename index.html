@@ -33,6 +33,16 @@
           <h1 id="character-name">角色加载器</h1>
           <p class="intro">从角色清单生成状态按钮，并在完整立绘之间平滑切换。</p>
         </header>
+        <section class="workspace-panel">
+          <h2>编辑测试台</h2>
+          <label>当前角色 <select id="character-picker" aria-label="选择角色"></select></label>
+          <div class="manifest-loader">
+            <input id="manifest-input" type="text" placeholder="角色清单路径，例如 ./characters/demo/character.json" />
+            <button id="load-manifest" class="secondary-button" type="button">加载角色</button>
+          </div>
+          <button id="open-live-mode" type="button">开启 OBS 展示模式</button>
+          <small>直播模式只显示透明角色画面；不会连接直播间。</small>
+        </section>
         <div id="status-message" class="status-message" role="status"></div>
         <button id="clear-overrides" class="secondary-button" type="button">清除临时状态</button>
 
@@ -99,12 +109,22 @@
           <button id="send-intent" class="secondary-button" type="button">校验并执行</button>
           <p id="intent-result">等待动作建议。</p>
         </details>
+        <section class="shortcut-panel">
+          <h2>快捷动作</h2>
+          <div class="shortcut-editor">
+            <select id="shortcut-state" aria-label="快捷动作状态"></select>
+            <button id="add-shortcut" class="secondary-button" type="button">添加当前姿态</button>
+          </div>
+          <div id="shortcut-list" class="shortcut-list"></div>
+          <p>快捷项保存在本浏览器，不修改角色包；双击快捷项可移除。</p>
+        </section>
         <div id="state-groups" class="state-groups"></div>
         <footer>
           <span id="manifest-path"></span>
         </footer>
       </aside>
     </main>
+    <button id="exit-live-mode" class="exit-live-mode" type="button">退出展示模式</button>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

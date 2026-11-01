@@ -6,6 +6,7 @@ import {
 import { CharacterStateManager } from "./runtime/state-manager.js";
 import { CharacterEventDispatcher } from "./runtime/event-dispatcher.js";
 import { ActionIntentController } from "./runtime/action-intent-controller.js";
+import { LiveEventInterface } from "./runtime/live-event-interface.js";
 
 const DEFAULT_MANIFEST = "./characters/github-girl/character.json";
 
@@ -43,6 +44,14 @@ const elements = {
   aiModel: document.querySelector("#ai-model"),
   applyModel: document.querySelector("#apply-model"),
   activeModel: document.querySelector("#active-model"),
+  characterPicker: document.querySelector("#character-picker"),
+  manifestInput: document.querySelector("#manifest-input"),
+  loadManifest: document.querySelector("#load-manifest"),
+  openLiveMode: document.querySelector("#open-live-mode"),
+  exitLiveMode: document.querySelector("#exit-live-mode"),
+  shortcutState: document.querySelector("#shortcut-state"),
+  addShortcut: document.querySelector("#add-shortcut"),
+  shortcutList: document.querySelector("#shortcut-list"),
 };
 
 let manifest;
@@ -58,6 +67,7 @@ let transitionToken = 0;
 let transitionSettings;
 let aiProviders = new Map();
 let activeAiConfig = null;
+let liveEventInterface;
 
 const DEFAULT_TRANSITION = { type: "crossfade", durationMs: 220, distancePx: 18 };
 const TRANSITION_CLASSES = ["transition-bounce", "transition-pop", "transition-none"];
@@ -269,6 +279,92 @@ function bindIntentSimulator() {
   });
 }
 
+function navigateToManifest(path) {
+  const url = new URL(location.href);
+  url.searchParams.set("manifest", path);
+  url.searchParams.delete("mode");
+  location.assign(url);
+}
+
+async function bindCharacterTools() {
+  const response = await fetch("./characters/index.json");
+  if (!response.ok) throw new Error(`角色目录读取失败：HTTP ${response.status}`);
+  const registry = await response.json();
+  elements.characterPicker.replaceChildren();
+  for (const character of registry.characters || []) {
+    const option = document.createElement("option");
+    option.value = new URL(character.manifest, response.url).pathname;
+    option.textContent = character.name;
+    option.selected = character.id === manifest.id;
+    elements.characterPicker.append(option);
+  }
+  elements.characterPicker.addEventListener("change", () => navigateToManifest(elements.characterPicker.value));
+  elements.manifestInput.value = manifestUrl.pathname;
+  elements.loadManifest.addEventListener("click", () => {
+    const path = elements.manifestInput.value.trim();
+    if (path) navigateToManifest(path);
+  });
+  elements.openLiveMode.addEventListener("click", () => {
+    const url = new URL(location.href);
+    url.searchParams.set("mode", "live");
+    location.assign(url);
+  });
+  elements.exitLiveMode.addEventListener("click", () => {
+    const url = new URL(location.href);
+    url.searchParams.delete("mode");
+    location.assign(url);
+  });
+}
+
+function shortcutStorageKey() {
+  return `static-character-runtime.shortcuts.${manifest.id}`;
+}
+
+function readShortcuts() {
+  try {
+    const value = JSON.parse(localStorage.getItem(shortcutStorageKey()) || "[]");
+    return Array.isArray(value) ? value.filter((id) => states.has(id)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function renderShortcuts() {
+  const shortcuts = readShortcuts();
+  elements.shortcutList.replaceChildren();
+  for (const stateId of shortcuts) {
+    const state = states.get(stateId);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = state.label;
+    button.title = "单击执行；双击移除";
+    button.addEventListener("click", () => activateState(state));
+    button.addEventListener("dblclick", () => {
+      localStorage.setItem(shortcutStorageKey(), JSON.stringify(shortcuts.filter((id) => id !== stateId)));
+      renderShortcuts();
+    });
+    elements.shortcutList.append(button);
+  }
+}
+
+function bindShortcutEditor() {
+  elements.shortcutState.replaceChildren();
+  for (const state of manifest.states) {
+    const option = document.createElement("option");
+    option.value = state.id;
+    option.textContent = `${state.label} (${state.id})`;
+    elements.shortcutState.append(option);
+  }
+  elements.addShortcut.addEventListener("click", () => {
+    const shortcuts = readShortcuts();
+    const stateId = elements.shortcutState.value;
+    if (!shortcuts.includes(stateId)) shortcuts.push(stateId);
+    localStorage.setItem(shortcutStorageKey(), JSON.stringify(shortcuts));
+    renderShortcuts();
+  });
+  renderShortcuts();
+}
+
 function renderModelOptions(providerId) {
   const provider = aiProviders.get(providerId);
   elements.aiModel.replaceChildren();
@@ -380,7 +476,11 @@ function bindChat() {
 
 async function start() {
   try {
-    const requested = new URLSearchParams(location.search).get("manifest") || DEFAULT_MANIFEST;
+    const query = new URLSearchParams(location.search);
+    const isLiveMode = query.get("mode") === "live";
+    document.documentElement.classList.toggle("live-mode", isLiveMode);
+    document.body.classList.toggle("live-mode", isLiveMode);
+    const requested = query.get("manifest") || DEFAULT_MANIFEST;
     const loaded = await loadCharacterManifest(requested);
     manifest = loaded.manifest;
     manifestUrl = loaded.url;
@@ -424,9 +524,14 @@ async function start() {
           : `已拒绝：${result.error}`;
       },
     });
+    liveEventInterface = new LiveEventInterface({
+      onEvent: (event) => { elements.lastEvent.textContent = `${event.platform}:${event.type}`; },
+      onError: (message) => { elements.status.textContent = message; },
+    });
     window.staticCharacterRuntime = Object.freeze({
       dispatch: (event) => eventDispatcher.dispatch(event),
       suggestAction: (intent) => actionIntentController.submit(intent),
+      receiveLiveEvent: (event) => liveEventInterface.receive(event),
     });
     elements.clearOverrides.addEventListener("click", () => {
       stateManager.clearOverrides("control_panel");
@@ -435,6 +540,8 @@ async function start() {
     bindTransitionEditor();
     renderEventControls();
     bindIntentSimulator();
+    await bindCharacterTools();
+    bindShortcutEditor();
     await loadModelOptions();
     bindChat();
     renderControls();

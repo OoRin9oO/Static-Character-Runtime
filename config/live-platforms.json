@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "defaultPlatform": "bilibili",
+  "platforms": [
+    {
+      "id": "bilibili",
+      "name": "哔哩哔哩直播",
+      "enabled": false,
+      "connector": null,
+      "note": "首选直播平台；当前只保留通用接口，不连接真实直播间。"
+    }
+  ]
+}

@@ -130,6 +130,35 @@ Default model: glm-5.3-flash
 
 当前继续保留无框架、无安装依赖的实现；未引入这些项目的 Python、React、Live2D、语音或记忆模块。
 
+## OBS 展示模式
+
+在编辑测试台点击“开启 OBS 展示模式”，或访问：
+
+```text
+http://127.0.0.1:4173/?mode=live
+```
+
+该模式隐藏控制面板、状态卡片、背景和阴影，仅保留透明角色画面。OBS 中新增“浏览器”来源并填写这个地址即可；若启动器选择了其他端口，请替换地址中的端口。
+
+## 编辑测试台与角色切换
+
+角色选择器读取 `characters/index.json`。也可以直接填写角色清单路径进行临时加载。快捷动作按角色保存在当前浏览器的 `localStorage`，不会修改或上传角色素材。
+
+## 通用直播事件接口
+
+页面提供 `window.staticCharacterRuntime.receiveLiveEvent(event)`，供未来的平台连接器输入统一事件。基础类型包括 `chat_message`、`gift`、`follow`、`like` 和 `system`。
+
+```js
+window.staticCharacterRuntime.receiveLiveEvent({
+  type: "chat_message",
+  platform: "bilibili",
+  user: { id: "viewer-id", name: "观众" },
+  text: "你好"
+});
+```
+
+首个平台已在 `config/live-platforms.json` 登记为哔哩哔哩，但连接器保持禁用；当前不会访问直播间或启动自动回复工作流。
+
 ## 常见问题
 
 - 若 `4173` 被占用，启动器会自动选择后续空闲端口。仅当 `4173` 至 `4183` 全部占用时才会停止。

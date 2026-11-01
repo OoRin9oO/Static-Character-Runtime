@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "defaultCharacter": "github-girl",
+  "characters": [
+    { "id": "github-girl", "name": "GitHub娘", "manifest": "./github-girl/character.json" }
+  ]
+}
