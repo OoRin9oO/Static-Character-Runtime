@@ -33,12 +33,22 @@ http://127.0.0.1:4173/?manifest=./characters/新角色/character.json
 
 ## 当前能力
 
-- 从 JSON 清单加载角色。
+- 从 JSON 清单加载角色，并验证版本、必需字段、重复状态和图片相对路径。
 - 根据清单自动生成状态按钮。
 - 双图层淡入淡出和轻微缩放过渡。
 - 固定舞台比例，兼容素材之间 1 像素的画布差异。
 - 图片或状态不存在时回退到默认待机状态。
 - 不绑定 GitHub娘，其他角色可以使用同一运行时。
+
+## 项目结构
+
+```text
+runtime/character-loader.js       角色清单读取、验证与图片预加载
+characters/<character-id>/        独立角色包
+app.js                            页面协调与控制面板
+```
+
+完整角色包字段与自定义方法见 [`characters/README.md`](./characters/README.md)。
 
 ## 常见问题
 

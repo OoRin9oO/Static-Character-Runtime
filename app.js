@@ -1,3 +1,9 @@
+import {
+  loadCharacterManifest,
+  preloadImage,
+  resolveStateImageUrl,
+} from "./runtime/character-loader.js";
+
 const DEFAULT_MANIFEST = "./characters/github-girl/character.json";
 
 const elements = {
@@ -13,25 +19,17 @@ const elements = {
 
 let manifest;
 let manifestUrl;
+let states;
 let activeLayer = 0;
 let activeStateId = null;
 let transitionToken = 0;
 
-function validateManifest(value) {
-  if (!value?.id || !value?.defaultState || !Array.isArray(value.states)) {
-    throw new Error("角色清单缺少 id、defaultState 或 states。");
-  }
-  if (!value.states.some((state) => state.id === value.defaultState)) {
-    throw new Error("defaultState 没有对应的状态。");
-  }
-}
-
 function stateById(id) {
-  return manifest.states.find((state) => state.id === id);
+  return states.get(id);
 }
 
 function imageUrlFor(state) {
-  return new URL(state.image, manifestUrl).href;
+  return resolveStateImageUrl(state, manifestUrl);
 }
 
 function setCurrentStateText(state) {
@@ -43,26 +41,18 @@ function setCurrentStateText(state) {
   });
 }
 
-function loadImage(url) {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(url);
-    image.onerror = () => reject(new Error(`无法加载图片：${url}`));
-    image.src = url;
-  });
-}
-
-async function switchState(requestedId, allowFallback = true) {
+async function switchState(requestedId, allowFallback = true, fallbackMessage = "") {
   const state = stateById(requestedId);
   if (!state) {
-    elements.status.textContent = `未知状态“${requestedId}”，已回退到待机。`;
-    if (allowFallback) return switchState(manifest.defaultState, false);
+    const message = `未知状态“${requestedId}”，已回退到待机。`;
+    elements.status.textContent = message;
+    if (allowFallback) return switchState(manifest.defaultState, false, message);
     return;
   }
 
   const token = ++transitionToken;
   try {
-    const url = await loadImage(imageUrlFor(state));
+    const url = await preloadImage(imageUrlFor(state));
     if (token !== transitionToken) return;
 
     const nextLayer = activeStateId === null ? activeLayer : 1 - activeLayer;
@@ -78,12 +68,17 @@ async function switchState(requestedId, allowFallback = true) {
 
     activeLayer = nextLayer;
     activeStateId = state.id;
-    elements.status.textContent = "";
+    elements.status.textContent = fallbackMessage;
     setCurrentStateText(state);
   } catch (error) {
-    elements.status.textContent = `${error.message} 已尝试回退到待机。`;
+    const message = `${error.message} 已尝试回退到待机。`;
+    elements.status.textContent = message;
     if (allowFallback && state.id !== manifest.defaultState) {
-      await switchState(manifest.defaultState, false);
+      await switchState(manifest.defaultState, false, message);
+    } else {
+      elements.label.textContent = "图片不可用";
+      elements.id.textContent = "resource_error";
+      elements.description.textContent = error.message;
     }
   }
 }
@@ -129,11 +124,10 @@ function renderControls() {
 async function start() {
   try {
     const requested = new URLSearchParams(location.search).get("manifest") || DEFAULT_MANIFEST;
-    manifestUrl = new URL(requested, location.href);
-    const response = await fetch(manifestUrl);
-    if (!response.ok) throw new Error(`角色清单读取失败：HTTP ${response.status}`);
-    manifest = await response.json();
-    validateManifest(manifest);
+    const loaded = await loadCharacterManifest(requested);
+    manifest = loaded.manifest;
+    manifestUrl = loaded.url;
+    states = loaded.states;
 
     document.documentElement.style.setProperty(
       "--transition-ms",
