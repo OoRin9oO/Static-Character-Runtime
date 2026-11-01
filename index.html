@@ -72,6 +72,18 @@
           </div>
           <p>通过统一入口模拟聊天或任务事件。</p>
         </section>
+
+        <details class="intent-panel">
+          <summary>动作建议模拟器（未连接 AI）</summary>
+          <textarea id="intent-input" rows="6" spellcheck="false">{
+  "state": "happy",
+  "intensity": 0.7,
+  "durationMs": 2500,
+  "reason": "模拟积极回应"
+}</textarea>
+          <button id="send-intent" class="secondary-button" type="button">校验并执行</button>
+          <p id="intent-result">等待动作建议。</p>
+        </details>
         <div id="state-groups" class="state-groups"></div>
         <footer>
           <span id="manifest-path"></span>

@@ -5,6 +5,7 @@ import {
 } from "./runtime/character-loader.js";
 import { CharacterStateManager } from "./runtime/state-manager.js";
 import { CharacterEventDispatcher } from "./runtime/event-dispatcher.js";
+import { ActionIntentController } from "./runtime/action-intent-controller.js";
 
 const DEFAULT_MANIFEST = "./characters/github-girl/character.json";
 
@@ -31,6 +32,9 @@ const elements = {
   lastEvent: document.querySelector("#last-event"),
   eventType: document.querySelector("#event-type"),
   sendEvent: document.querySelector("#send-event"),
+  intentInput: document.querySelector("#intent-input"),
+  sendIntent: document.querySelector("#send-intent"),
+  intentResult: document.querySelector("#intent-result"),
 };
 
 let manifest;
@@ -38,6 +42,7 @@ let manifestUrl;
 let states;
 let stateManager;
 let eventDispatcher;
+let actionIntentController;
 let nextRenderMessage = "";
 let activeLayer = 0;
 let activeStateId = null;
@@ -248,6 +253,12 @@ function renderEventControls() {
   });
 }
 
+function bindIntentSimulator() {
+  elements.sendIntent.addEventListener("click", () => {
+    actionIntentController.submit(elements.intentInput.value);
+  });
+}
+
 async function start() {
   try {
     const requested = new URLSearchParams(location.search).get("manifest") || DEFAULT_MANIFEST;
@@ -271,17 +282,32 @@ async function start() {
     eventDispatcher = new CharacterEventDispatcher({
       stateManager,
       eventMap: manifest.events || {},
-      resolveStateAction: (stateId) => {
+      resolveStateAction: (stateId, payload) => {
         const state = states.get(stateId);
-        return state ? { state: state.id, mode: "base", ...state.behavior } : null;
+        if (!state) return null;
+        const action = { state: state.id, mode: "base", ...state.behavior };
+        if (payload.source === "ai" && action.mode === "override") {
+          action.durationMs = payload.durationMs;
+        }
+        return action;
       },
       onEvent: (event) => {
         elements.lastEvent.textContent = event.type;
       },
       onError: (message) => { elements.status.textContent = message; },
     });
+    actionIntentController = new ActionIntentController({
+      isKnownState: (stateId) => states.has(stateId),
+      dispatch: (event) => eventDispatcher.dispatch(event),
+      onDecision: (result) => {
+        elements.intentResult.textContent = result.ok
+          ? `已接受：${result.intent.state}`
+          : `已拒绝：${result.error}`;
+      },
+    });
     window.staticCharacterRuntime = Object.freeze({
       dispatch: (event) => eventDispatcher.dispatch(event),
+      suggestAction: (intent) => actionIntentController.submit(intent),
     });
     elements.clearOverrides.addEventListener("click", () => {
       stateManager.clearOverrides("control_panel");
@@ -289,6 +315,7 @@ async function start() {
     applyTransitionSettings(manifest.transition);
     bindTransitionEditor();
     renderEventControls();
+    bindIntentSimulator();
     renderControls();
     await renderSnapshot(stateManager.getSnapshot("initial"));
   } catch (error) {

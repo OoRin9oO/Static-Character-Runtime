@@ -6,7 +6,7 @@
 
 - **Name:** Static Character Runtime
 - **Version:** 0.1.0
-- **Status:** Prototype / Stage C（视觉过渡）
+- **Status:** Prototype / Stage E（动作建议校验）
 - **License:** MIT（程序代码）
 - **Sample character:** GitHub娘
 
@@ -40,6 +40,7 @@ http://127.0.0.1:4173/?manifest=./characters/新角色/character.json
 - 双图层预加载与稳定切换，支持淡入淡出、弹跳、弹出和无动画。
 - 内置过渡编辑器，可实时调整动画类型、时长和弹跳幅度。
 - 提供统一事件入口和事件模拟器，可由聊天、任务或未来 AI 模块驱动状态。
+- 提供动作建议白名单校验、参数限制和重复动作冷却；当前仅使用模拟器，未连接真实 AI。
 - 固定舞台比例，兼容素材之间 1 像素的画布差异。
 - 图片或状态不存在时回退到默认待机状态。
 - 不绑定 GitHub娘，其他角色可以使用同一运行时。
@@ -52,6 +53,7 @@ http://127.0.0.1:4173/?manifest=./characters/新角色/character.json
 runtime/character-loader.js       角色清单读取、验证与图片预加载
 runtime/state-manager.js          基础状态、临时覆盖、优先级与自动恢复
 runtime/event-dispatcher.js       统一事件校验、映射与分发
+runtime/action-intent-controller.js  动作建议校验、冷却与安全执行
 characters/<character-id>/        独立角色包
 app.js                            页面协调与控制面板
 ```
@@ -69,12 +71,26 @@ window.staticCharacterRuntime.dispatch({
 });
 ```
 
+合法的动作建议可以通过同一个只读运行时入口提交：
+
+```js
+window.staticCharacterRuntime.suggestAction({
+  state: "happy",
+  intensity: 0.7,
+  durationMs: 2500,
+  reason: "积极回应"
+});
+```
+
+`state` 必须属于当前角色；`intensity` 范围为 0–1；`durationMs` 范围为 250–10000。动作建议不能指定图片路径。
+
 事件只能使用角色清单 `events` 中已注册的映射；未知事件会被安全忽略。
 
 控制面板中的状态按钮也通过统一的 `state_requested` 事件工作。运行事件测试：
 
 ```powershell
 node tests/event-dispatcher.test.mjs
+node tests/action-intent-controller.test.mjs
 ```
 
 测试需要 Node.js，但项目的正常启动和使用仍然不需要 Node.js。

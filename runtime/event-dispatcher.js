@@ -20,7 +20,7 @@ export class CharacterEventDispatcher {
     if (!event) return false;
 
     const action = event.type === "state_requested"
-      ? this.resolveStateAction(event.payload.stateId)
+      ? this.resolveStateAction(event.payload.stateId, event.payload)
       : this.eventMap[event.type];
     if (!action) {
       const message = event.type === "state_requested"
