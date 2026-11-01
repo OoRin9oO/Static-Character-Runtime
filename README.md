@@ -71,6 +71,14 @@ window.staticCharacterRuntime.dispatch({
 
 事件只能使用角色清单 `events` 中已注册的映射；未知事件会被安全忽略。
 
+控制面板中的状态按钮也通过统一的 `state_requested` 事件工作。运行事件测试：
+
+```powershell
+node tests/event-dispatcher.test.mjs
+```
+
+测试需要 Node.js，但项目的正常启动和使用仍然不需要 Node.js。
+
 ## 常见问题
 
 - 若 `4173` 被占用，启动器会自动选择后续空闲端口。仅当 `4173` 至 `4183` 全部占用时才会停止。

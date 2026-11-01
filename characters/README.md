@@ -65,6 +65,15 @@ characters/<character-id>/
 
 `events` 把外部事件映射为基础状态或临时覆盖状态。事件名称及映射均属于角色配置，运行时不会把某个角色的状态写死在核心代码中。
 
+建议优先使用以下标准事件，角色可以只配置自己需要的部分：
+
+- `user_message_received`、`user_input_started`
+- `assistant_thinking`、`assistant_response_started`、`assistant_response_chunk`、`assistant_response_finished`
+- `task_started`、`task_progress`、`task_succeeded`、`task_failed`
+- `greeting`、`farewell`
+
+`state_requested` 是控制面板使用的内置测试事件，不需要写入角色清单。
+
 ## 路径规则
 
 - 图片路径必须相对于角色目录。

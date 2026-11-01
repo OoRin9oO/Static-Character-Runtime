@@ -14,14 +14,18 @@
     "special": "特殊状态"
   },
   "events": {
+    "user_message_received": { "state": "listening", "mode": "base" },
     "user_input_started": { "state": "listening", "mode": "base" },
     "assistant_thinking": { "state": "thinking", "mode": "base" },
     "assistant_response_started": { "state": "talking", "mode": "base" },
+    "assistant_response_chunk": { "state": "talking", "mode": "base" },
     "assistant_response_finished": { "state": "idle", "mode": "base" },
     "task_started": { "state": "working", "mode": "base" },
+    "task_progress": { "state": "working", "mode": "base" },
     "task_succeeded": { "state": "insight", "mode": "override", "priority": 80, "durationMs": 2500 },
     "task_failed": { "state": "sad", "mode": "override", "priority": 80, "durationMs": 3500 },
-    "greeting": { "state": "greeting", "mode": "override", "priority": 80, "durationMs": 2500 }
+    "greeting": { "state": "greeting", "mode": "override", "priority": 80, "durationMs": 2500 },
+    "farewell": { "state": "greeting", "mode": "override", "priority": 80, "durationMs": 2500 }
   },
   "states": [
     { "id": "idle", "label": "待机", "group": "basic", "image": "assets/待机闭嘴.png", "description": "默认的安静待机状态。" },

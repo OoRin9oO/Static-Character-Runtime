@@ -190,16 +190,10 @@ async function renderSnapshot(snapshot, allowFallback = true, fallbackMessage = 
 }
 
 function activateState(state) {
-  const behavior = state.behavior || { mode: "base" };
-  if (behavior.mode === "override") {
-    stateManager.pushOverride(state.id, {
-      priority: behavior.priority ?? 60,
-      durationMs: behavior.durationMs ?? 2500,
-      reason: "control_panel",
-    });
-  } else {
-    stateManager.setBaseState(state.id, "control_panel");
-  }
+  eventDispatcher.dispatch({
+    type: "state_requested",
+    payload: { stateId: state.id, source: "control_panel" },
+  });
 }
 
 function renderControls() {
@@ -277,6 +271,10 @@ async function start() {
     eventDispatcher = new CharacterEventDispatcher({
       stateManager,
       eventMap: manifest.events || {},
+      resolveStateAction: (stateId) => {
+        const state = states.get(stateId);
+        return state ? { state: state.id, mode: "base", ...state.behavior } : null;
+      },
       onEvent: (event) => {
         elements.lastEvent.textContent = event.type;
       },
