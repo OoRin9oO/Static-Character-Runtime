@@ -34,6 +34,34 @@
         </header>
         <div id="status-message" class="status-message" role="status"></div>
         <button id="clear-overrides" class="secondary-button" type="button">清除临时状态</button>
+
+        <details class="transition-editor">
+          <summary>过渡编辑器</summary>
+          <div class="editor-grid">
+            <label>
+              动画类型
+              <select id="transition-type">
+                <option value="crossfade">淡入淡出</option>
+                <option value="bounce">弹跳</option>
+                <option value="pop">弹出</option>
+                <option value="none">无动画</option>
+              </select>
+            </label>
+            <label>
+              时长 <output id="transition-duration-value">220 ms</output>
+              <input id="transition-duration" type="range" min="0" max="5000" step="10" />
+            </label>
+            <label id="transition-distance-row">
+              弹跳幅度 <output id="transition-distance-value">18 px</output>
+              <input id="transition-distance" type="range" min="0" max="200" step="1" />
+            </label>
+          </div>
+          <div class="editor-actions">
+            <button id="preview-transition" class="secondary-button" type="button">预览动画</button>
+            <button id="reset-transition" class="secondary-button" type="button">恢复角色配置</button>
+          </div>
+          <p>仅调整当前页面预览，不会修改角色配置文件。</p>
+        </details>
         <div id="state-groups" class="state-groups"></div>
         <footer>
           <span id="manifest-path"></span>

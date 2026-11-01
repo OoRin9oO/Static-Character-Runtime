@@ -6,7 +6,7 @@
 
 - **Name:** Static Character Runtime
 - **Version:** 0.1.0
-- **Status:** Prototype / Stage A baseline
+- **Status:** Prototype / Stage C（视觉过渡）
 - **License:** MIT（程序代码）
 - **Sample character:** GitHub娘
 
@@ -35,7 +35,8 @@ http://127.0.0.1:4173/?manifest=./characters/新角色/character.json
 
 - 从 JSON 清单加载角色，并验证版本、必需字段、重复状态和图片相对路径。
 - 根据清单自动生成状态按钮。
-- 双图层淡入淡出和轻微缩放过渡。
+- 双图层预加载与稳定切换，支持淡入淡出、弹跳、弹出和无动画。
+- 内置过渡编辑器，可实时调整动画类型、时长和弹跳幅度。
 - 固定舞台比例，兼容素材之间 1 像素的画布差异。
 - 图片或状态不存在时回退到默认待机状态。
 - 不绑定 GitHub娘，其他角色可以使用同一运行时。

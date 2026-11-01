@@ -73,10 +73,16 @@ function validateOptionalSettings(manifest) {
   }
 
   if (manifest.transition !== undefined) {
-    const { type, durationMs } = manifest.transition || {};
+    const { type, durationMs, distancePx } = manifest.transition || {};
     requireText(type, "transition.type");
+    if (!["crossfade", "bounce", "pop", "none"].includes(type)) {
+      throw new Error("transition.type 必须是 crossfade、bounce、pop 或 none。");
+    }
     if (!Number.isFinite(durationMs) || durationMs < 0 || durationMs > 5000) {
       throw new Error("transition.durationMs 必须是 0 到 5000 之间的数字。");
+    }
+    if (distancePx !== undefined && (!Number.isFinite(distancePx) || distancePx < 0 || distancePx > 200)) {
+      throw new Error("transition.distancePx 必须是 0 到 200 之间的数字。");
     }
   }
 

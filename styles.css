@@ -4,6 +4,8 @@
   background: #090b12;
   color: #f6f7fb;
   --transition-ms: 220ms;
+  --transition-distance: 18px;
+  --transition-rebound: -6.3px;
 }
 
 * { box-sizing: border-box; }
@@ -77,6 +79,37 @@ button { font: inherit; }
   filter: drop-shadow(0 22px 34px rgba(0,0,0,.35));
 }
 
+.character-layer.transition-none { transition-duration: 0ms; }
+
+.character-layer.transition-bounce.is-visible {
+  animation: character-bounce var(--transition-ms) cubic-bezier(.22, .8, .35, 1);
+}
+
+.character-layer.transition-pop.is-visible {
+  animation: character-pop var(--transition-ms) cubic-bezier(.2, .9, .3, 1.25);
+}
+
+@keyframes character-bounce {
+  0% {
+    transform: translate(var(--character-offset-x, 0px), calc(var(--character-offset-y, 0px) + var(--transition-distance))) scale(var(--character-scale, 1));
+  }
+  55% {
+    transform: translate(var(--character-offset-x, 0px), calc(var(--character-offset-y, 0px) + var(--transition-rebound))) scale(var(--character-scale, 1));
+  }
+  100% {
+    transform: translate(var(--character-offset-x, 0px), var(--character-offset-y, 0px)) scale(var(--character-scale, 1));
+  }
+}
+
+@keyframes character-pop {
+  0% {
+    transform: translate(var(--character-offset-x, 0px), var(--character-offset-y, 0px)) scale(calc(var(--character-scale, 1) * .86));
+  }
+  100% {
+    transform: translate(var(--character-offset-x, 0px), var(--character-offset-y, 0px)) scale(var(--character-scale, 1));
+  }
+}
+
 .character-layer.is-visible {
   opacity: 1;
 }
@@ -134,6 +167,29 @@ h1 { margin: 0; font-size: clamp(1.7rem, 4vw, 2.5rem); }
   cursor: pointer;
 }
 .secondary-button:hover { background: rgba(255,255,255,.06); }
+
+.transition-editor {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 13px;
+  color: #c9ccda;
+}
+
+.transition-editor summary { cursor: pointer; font-weight: 700; }
+.editor-grid { display: grid; gap: 12px; margin-top: 14px; }
+.editor-grid label { display: grid; gap: 6px; font-size: .78rem; }
+.editor-grid output { color: #d6a7ff; justify-self: end; margin-top: -1.2em; }
+.editor-grid select {
+  padding: 8px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 9px;
+  background: #171a25;
+  color: #f6f7fb;
+}
+.editor-grid input { width: 100%; accent-color: #c77dff; }
+.editor-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.transition-editor > p { margin: 10px 0 0; color: #777d91; font-size: .7rem; }
 
 .state-group { margin-top: 22px; }
 .state-group h2 { margin: 0 0 10px; color: #c9ccda; font-size: .82rem; }

@@ -19,6 +19,14 @@ const elements = {
   status: document.querySelector("#status-message"),
   clearOverrides: document.querySelector("#clear-overrides"),
   manifestPath: document.querySelector("#manifest-path"),
+  transitionType: document.querySelector("#transition-type"),
+  transitionDuration: document.querySelector("#transition-duration"),
+  transitionDurationValue: document.querySelector("#transition-duration-value"),
+  transitionDistance: document.querySelector("#transition-distance"),
+  transitionDistanceValue: document.querySelector("#transition-distance-value"),
+  transitionDistanceRow: document.querySelector("#transition-distance-row"),
+  previewTransition: document.querySelector("#preview-transition"),
+  resetTransition: document.querySelector("#reset-transition"),
 };
 
 let manifest;
@@ -29,6 +37,10 @@ let nextRenderMessage = "";
 let activeLayer = 0;
 let activeStateId = null;
 let transitionToken = 0;
+let transitionSettings;
+
+const DEFAULT_TRANSITION = { type: "crossfade", durationMs: 220, distancePx: 18 };
+const TRANSITION_CLASSES = ["transition-bounce", "transition-pop", "transition-none"];
 
 function stateById(id) {
   return states.get(id);
@@ -69,6 +81,49 @@ function applyDisplay(layer, state) {
   layer.style.setProperty("--character-offset-y", `${display.offsetY}px`);
 }
 
+function applyTransitionClass(layer) {
+  layer.classList.remove(...TRANSITION_CLASSES);
+  if (transitionSettings.type !== "crossfade") {
+    layer.classList.add(`transition-${transitionSettings.type}`);
+  }
+}
+
+function applyTransitionSettings(settings) {
+  transitionSettings = { ...DEFAULT_TRANSITION, ...settings };
+  document.documentElement.style.setProperty("--transition-ms", `${transitionSettings.durationMs}ms`);
+  document.documentElement.style.setProperty("--transition-distance", `${transitionSettings.distancePx}px`);
+  document.documentElement.style.setProperty("--transition-rebound", `${transitionSettings.distancePx * -0.35}px`);
+  elements.transitionType.value = transitionSettings.type;
+  elements.transitionDuration.value = transitionSettings.durationMs;
+  elements.transitionDurationValue.value = `${transitionSettings.durationMs} ms`;
+  elements.transitionDistance.value = transitionSettings.distancePx;
+  elements.transitionDistanceValue.value = `${transitionSettings.distancePx} px`;
+  elements.transitionDistanceRow.hidden = transitionSettings.type !== "bounce";
+  elements.layers.forEach(applyTransitionClass);
+}
+
+function previewTransition() {
+  const layer = elements.layers[activeLayer];
+  if (!layer || activeStateId === null) return;
+  layer.classList.remove("is-visible");
+  void layer.offsetWidth;
+  requestAnimationFrame(() => layer.classList.add("is-visible"));
+}
+
+function bindTransitionEditor() {
+  elements.transitionType.addEventListener("change", () => {
+    applyTransitionSettings({ ...transitionSettings, type: elements.transitionType.value });
+  });
+  elements.transitionDuration.addEventListener("input", () => {
+    applyTransitionSettings({ ...transitionSettings, durationMs: Number(elements.transitionDuration.value) });
+  });
+  elements.transitionDistance.addEventListener("input", () => {
+    applyTransitionSettings({ ...transitionSettings, distancePx: Number(elements.transitionDistance.value) });
+  });
+  elements.previewTransition.addEventListener("click", previewTransition);
+  elements.resetTransition.addEventListener("click", () => applyTransitionSettings(manifest.transition));
+}
+
 async function renderSnapshot(snapshot, allowFallback = true, fallbackMessage = "") {
   const requestedId = snapshot.effectiveState;
   const state = stateById(requestedId);
@@ -99,6 +154,7 @@ async function renderSnapshot(snapshot, allowFallback = true, fallbackMessage = 
     next.src = url;
     next.alt = `${manifest.name}：${state.label}`;
     applyDisplay(next, state);
+    applyTransitionClass(next);
 
     requestAnimationFrame(() => {
       next.classList.add("is-visible");
@@ -187,10 +243,6 @@ async function start() {
     manifestUrl = loaded.url;
     states = loaded.states;
 
-    document.documentElement.style.setProperty(
-      "--transition-ms",
-      `${manifest.transition?.durationMs || 220}ms`,
-    );
     elements.name.textContent = manifest.name;
     elements.manifestPath.textContent = `Manifest: ${manifestUrl.pathname}`;
     stateManager = new CharacterStateManager({
@@ -206,6 +258,8 @@ async function start() {
     elements.clearOverrides.addEventListener("click", () => {
       stateManager.clearOverrides("control_panel");
     });
+    applyTransitionSettings(manifest.transition);
+    bindTransitionEditor();
     renderControls();
     await renderSnapshot(stateManager.getSnapshot("initial"));
   } catch (error) {

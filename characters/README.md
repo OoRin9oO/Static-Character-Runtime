@@ -50,12 +50,14 @@ characters/<character-id>/
 {
   "canvas": { "width": 1024, "height": 1536 },
   "display": { "scale": 1, "anchorX": 50, "anchorY": 50, "offsetX": 0, "offsetY": 0 },
-  "transition": { "type": "crossfade", "durationMs": 220 },
+  "transition": { "type": "bounce", "durationMs": 320, "distancePx": 18 },
   "groups": { "basic": "基础状态" }
 }
 ```
 
 `display` 可以放在角色清单顶层作为默认值，也可以放在单个状态中覆盖，用于修正不同图片的缩放、锚点和像素偏移。
+
+`transition.type` 支持 `crossfade`（淡入淡出）、`bounce`（弹跳）、`pop`（弹出）和 `none`（无动画）。`durationMs` 控制时长，`distancePx` 控制弹跳幅度。页面内的过渡编辑器可实时预览这些参数，但不会写回配置文件。
 
 ## 路径规则
 

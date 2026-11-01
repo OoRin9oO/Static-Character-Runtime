@@ -6,7 +6,7 @@
   "defaultState": "idle",
   "canvas": { "width": 1024, "height": 1536 },
   "display": { "scale": 1, "anchorX": 50, "anchorY": 50, "offsetX": 0, "offsetY": 0 },
-  "transition": { "type": "crossfade", "durationMs": 220 },
+  "transition": { "type": "bounce", "durationMs": 320, "distancePx": 18 },
   "groups": {
     "basic": "基础工作状态",
     "emotion": "情绪状态",
