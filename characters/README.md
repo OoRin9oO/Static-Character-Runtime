@@ -103,6 +103,8 @@ characters/<character-id>/
 
 目录名称大小写不敏感。`Basic` 放基础状态，`Emotion` 放情绪动作，`Interact` 放问候、道歉等交互动作，`Special` 放休眠或特殊效果。图片文件名作为动作显示名称的默认值；角色包可自行扩展其他分区。
 
+导入器也识别常见缩写目录：`Emo` 对应 `Emotion`，`inter` 对应 `Interact`，`Spec` 对应 `Special`。新角色导入时，`Basic` 状态默认作为长期基础状态；`Emotion`、`Interact` 和 `Special` 状态默认作为临时覆写，2.5 秒后恢复当前基础状态。已有清单即使没有 `behavior` 字段，运行时也会按分组采用相同默认值；显式配置的 `behavior` 优先。
+
 导入器可以从 ZIP 或浏览器选中的角色文件夹识别分区。若压缩包/文件夹带一个未登记角色根目录，确认后会创建 `characters/<character-id>/`、生成 `character.json`，并写入 `characters/index.json`；若导入的是已登记角色，则素材归入该角色。包含多个未登记角色的导入会被拒绝。ZIP 中的路径必须经过安全校验，不能覆盖角色目录以外的文件。
 
 编辑器修改动作显示名称时，建议只更新 `character.json` 中对应状态的 `label`，图片文件名保持不变，以免破坏引用。用户仍可选择单独重命名图片。手动编辑 JSON 或移动文件后，需要刷新页面重新读取角色清单。

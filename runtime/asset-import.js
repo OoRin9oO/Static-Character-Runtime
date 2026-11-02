@@ -1,6 +1,19 @@
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]);
 const SECTION_NAMES = ["Basic", "Emotion", "Interact", "Special"];
-const SECTION_ALIASES = new Map(SECTION_NAMES.map((name) => [name.toLowerCase(), name]));
+const SECTION_ALIASES = new Map([
+  ["basic", "Basic"],
+  ["emotion", "Emotion"], ["emo", "Emotion"],
+  ["interact", "Interact"], ["inter", "Interact"],
+  ["special", "Special"], ["spec", "Special"],
+]);
+
+export function defaultBehaviorForGroup(group) {
+  const canonical = SECTION_ALIASES.get(String(group || "").toLowerCase());
+  if (["Emotion", "Interact", "Special"].includes(canonical)) {
+    return { mode: "override", priority: 60, durationMs: 2500 };
+  }
+  return { mode: "base" };
+}
 
 function safePath(path) {
   const normalized = path.replace(/\\/g, "/");
@@ -20,6 +33,7 @@ export function classifyAssetPath(path) {
 }
 
 export function planAssetImport(files, { characterId, section = "Basic" } = {}) {
+  if (!Array.isArray(files) || files.length === 0) throw new Error("没有找到可导入的图片。");
   if (!characterId || !/^[a-z0-9_-]+$/i.test(characterId)) throw new Error("请先选择有效的角色目录。");
   const canonicalSection = SECTION_ALIASES.get(String(section).toLowerCase());
   if (!canonicalSection) throw new Error("素材分区必须是 Basic、Emotion、Interact 或 Special。");
@@ -28,6 +42,7 @@ export function planAssetImport(files, { characterId, section = "Basic" } = {}) 
     const archiveAsset = file.archivePath ? classifyAssetPath(file.archivePath) : null;
     return { file, characterId, section: archiveAsset?.section || canonicalSection, filename: file.name, label, stateId: null, importOrder: index };
   });
+  if (planned.length === 0) throw new Error("没有找到支持的图片；请选取 PNG、JPG、WebP、GIF 或 AVIF 图片。");
   const targets = new Set();
   for (const item of planned) {
     const target = `${item.section.toLowerCase()}/${item.filename.toLowerCase()}`;
@@ -53,9 +68,12 @@ export function inferNewCharacterPackage(files, characters = []) {
     throw new Error("一次只能导入一个角色文件夹；已取消混合角色导入。");
   }
   const name = [...roots][0];
-  const existing = characters.find((item) => item.id.toLowerCase() === name.toLowerCase() || item.name.toLowerCase() === name.toLowerCase());
-  if (existing) return null;
-  return { id: characterIdFromName(name), name };
+  if (characters.some((item) => item.name.toLowerCase() === name.toLowerCase())) return null;
+  const id = characterIdFromName(name);
+  if (characters.some((item) => item.id.toLowerCase() === id.toLowerCase())) {
+    throw new Error(`角色文件夹“${name}”生成的 ID“${id}”已被占用，请先重命名文件夹。`);
+  }
+  return { id, name };
 }
 
 export function buildCharacterManifest({ id, name, assets }) {
@@ -73,7 +91,13 @@ export function buildCharacterManifest({ id, name, assets }) {
       stateId = `${safeBase.slice(0, 64 - tail.length)}${tail}`;
     }
     used.add(stateId.toLowerCase());
-    return { id: stateId, label: asset.label, group: asset.section, image: `${asset.section}/${asset.filename}` };
+    return {
+      id: stateId,
+      label: asset.label,
+      group: asset.section,
+      image: `${asset.section}/${asset.filename}`,
+      behavior: defaultBehaviorForGroup(asset.section),
+    };
   });
   const defaultState = states.find((state) => state.group === "Basic" && /^(idle|default|待机|默认)/i.test(state.label))
     || states.find((state) => state.group === "Basic")

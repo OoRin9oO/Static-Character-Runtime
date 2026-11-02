@@ -364,6 +364,8 @@ try {
                         if ([string]$State.image -notmatch '^(Basic|Emotion|Interact|Special)/[^/\\]+\.(png|jpg|jpeg|webp|gif|avif)$') { throw "状态图片路径不安全或格式不支持。" }
                     }
                     if (-not $StateIds.ContainsKey([string]$NewManifest.defaultState)) { throw "默认动作必须存在于状态列表中。" }
+                    $RegistryPath = Join-Path (Join-Path $Root "characters") "index.json"
+                    $Registry = Get-Content -LiteralPath $RegistryPath -Raw -Encoding UTF8 | ConvertFrom-Json
                     $CharacterRoot = Join-Path (Join-Path $Root "characters") $CharacterId
                     if (Test-Path -LiteralPath $CharacterRoot) {
                         $ExistingManifestPath = Join-Path $CharacterRoot "character.json"
@@ -371,12 +373,11 @@ try {
                         $ExistingManifest = Get-Content -LiteralPath $ExistingManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
                         if ([string]$ExistingManifest.id -ne $CharacterId -or [string]$ExistingManifest.metadata.packageImportSource -ne "folder-or-zip") { throw "角色目录已存在且并非由本次导入流程创建：$CharacterId" }
                     } else {
+                        if (@($Registry.characters | Where-Object { [string]$_.id -ieq $CharacterId }).Count -gt 0) { throw "角色 ID 已在角色清单中登记：$CharacterId" }
                         $null = New-Item -ItemType Directory -Path $CharacterRoot
                     }
                     $ManifestPath = Join-Path $CharacterRoot "character.json"
                     [IO.File]::WriteAllText($ManifestPath, ($NewManifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-                    $RegistryPath = Join-Path (Join-Path $Root "characters") "index.json"
-                    $Registry = Get-Content -LiteralPath $RegistryPath -Raw -Encoding UTF8 | ConvertFrom-Json
                     $Registry.characters = @($Registry.characters | Where-Object { $_.id -ne $CharacterId }) + @(@{ id = $CharacterId; name = [string]$NewManifest.name; manifest = "./$CharacterId/character.json" })
                     if ([string]::IsNullOrWhiteSpace([string]$Registry.defaultCharacter)) { $Registry.defaultCharacter = $CharacterId }
                     [IO.File]::WriteAllText($RegistryPath, ($Registry | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
@@ -474,7 +475,6 @@ try {
                     if ($WriteImage) { [IO.File]::WriteAllBytes($TargetPath, $Bytes) }
                     Move-Item -LiteralPath $TempManifestPath -Destination $ManifestPath -Force
                     Move-Item -LiteralPath $TempRegistryPath -Destination $RegistryPath -Force
-                    [IO.File]::WriteAllText($RegistryPath, $RegistryJson, [Text.UTF8Encoding]::new($false))
                     Send-Json $Stream 200 "OK" @{ ok = $true; path = $ImagePath; stateId = $StateId; label = [string]$Import.label }
                 } catch {
                     Send-Json $Stream 400 "Bad Request" @{ error = $_.Exception.Message }

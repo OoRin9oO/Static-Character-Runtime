@@ -13,7 +13,7 @@ import {
   DEFAULT_SCENE_LIMITS, HARD_SCENE_LIMITS, LIMIT_STORAGE_KEY,
 } from "./runtime/scene-manager.js";
 import {
-  buildCharacterManifest, inferNewCharacterPackage, planAssetImport, SECTION_NAMES,
+  buildCharacterManifest, defaultBehaviorForGroup, inferNewCharacterPackage, planAssetImport, SECTION_NAMES,
   validateArchiveTargets,
 } from "./runtime/asset-import.js";
 
@@ -743,12 +743,33 @@ async function filesFromInput(files) {
       result.push(file);
     }
   }
+  if (result.length === 0) throw new Error("没有找到支持的图片；请选取 PNG、JPG、WebP、GIF 或 AVIF 图片。 ");
   return result;
+}
+
+async function validateImportImages(files) {
+  for (const file of files) {
+    if (file.size > 15 * 1024 * 1024) {
+      throw new Error(`图片“${file.archivePath || file.name}”超过 15 MB 限制。`);
+    }
+    const url = URL.createObjectURL(file);
+    try {
+      await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error(`图片“${file.archivePath || file.name}”无法解码，已取消导入。`));
+        image.src = url;
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
 }
 
 async function handleAssetFiles(files, forcedCharacterId = "") {
   try {
     const images = await filesFromInput(files);
+    await validateImportImages(images);
     const defaultSection = elements.assetSection.value || "Basic";
     const selectedCharacterId = forcedCharacterId || elements.assetCharacter.value;
     const newCharacter = forcedCharacterId ? null : inferNewCharacterPackage(images, characterRegistry.characters);
@@ -786,7 +807,6 @@ function refreshPendingCharacterManifest() {
 
 async function commitAssetImport() {
     elements.commitAssets.disabled = true;
-    const imported = [];
     try {
       const newCharacterId = pendingCharacterManifest?.id || "";
       if (pendingCharacterManifest) {
@@ -807,7 +827,6 @@ async function commitAssetImport() {
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || "素材保存失败。");
-        imported.push({ ...item, path: result.path, stateId: result.stateId });
       }
       await syncCharacterRegistry();
       if (newCharacterId) navigateToManifest(`./characters/${newCharacterId}/character.json`);
@@ -964,7 +983,7 @@ async function start() {
       resolveStateAction: (stateId, payload) => {
         const state = states.get(stateId);
         if (!state) return null;
-        const action = { state: state.id, mode: "base", ...state.behavior };
+        const action = { state: state.id, ...defaultBehaviorForGroup(state.group), ...state.behavior };
         if (payload.source === "ai" && action.mode === "override") {
           action.durationMs = payload.durationMs;
         }

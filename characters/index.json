@@ -1,7 +1,21 @@
 {
-  "schemaVersion": 1,
-  "defaultCharacter": "github-girl",
-  "characters": [
-    { "id": "github-girl", "name": "GitHub娘", "manifest": "./github-girl/character.json" }
-  ]
+    "defaultCharacter":  "deepdeep",
+    "schemaVersion":  1,
+    "characters":  [
+                       {
+                           "name":  "deepdeep",
+                           "id":  "deepdeep",
+                           "manifest":  "./deepdeep/character.json"
+                       },
+                       {
+                           "name":  "GGPPTT",
+                           "id":  "ggpptt",
+                           "manifest":  "./ggpptt/character.json"
+                       },
+                       {
+                           "name":  "GitHub娘",
+                           "id":  "github-girl",
+                           "manifest":  "./github-girl/character.json"
+                       }
+                   ]
 }
