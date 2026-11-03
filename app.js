@@ -99,6 +99,7 @@ let pendingAssets = [];
 let pendingCharacterManifest = null;
 let sceneRenderToken = 0;
 const sceneManifestCache = new Map();
+const sceneOverrides = new Map();
 
 const DEFAULT_TRANSITION = { type: "crossfade", durationMs: 220, distancePx: 18 };
 const TRANSITION_CLASSES = ["transition-bounce", "transition-pop", "transition-none"];
@@ -315,11 +316,42 @@ function updateSceneInstance(instance, updates) {
   const scene = sceneStore.active;
   const target = scene.characters.find((item) => item.instanceId === instance.instanceId);
   if (!target) return;
-  if (updates.currentState) target.currentState = updates.currentState;
+  if (updates.currentState) {
+    target.currentState = updates.currentState;
+    clearSceneOverride(target.instanceId);
+  }
   if (updates.displayName) target.displayName = updates.displayName;
   if (updates.transform) target.transform = { ...target.transform, ...updates.transform };
   sceneStore.update(scene);
   renderSceneStage(scene);
+}
+
+function clearSceneOverride(instanceId) {
+  const active = sceneOverrides.get(instanceId);
+  if (active?.timer) clearTimeout(active.timer);
+  sceneOverrides.delete(instanceId);
+}
+
+function playSceneOverride(instance, state) {
+  const behavior = { ...defaultBehaviorForGroup(state.group), ...state.behavior };
+  if (behavior.mode !== "override") return;
+  clearSceneOverride(instance.instanceId);
+  const active = { stateId: state.id, timer: null };
+  const durationMs = behavior.durationMs ?? 2500;
+  if (durationMs > 0) {
+    active.timer = setTimeout(() => {
+      if (sceneOverrides.get(instance.instanceId) !== active) return;
+      sceneOverrides.delete(instance.instanceId);
+      if (sceneStore.active.characters.some((item) => item.instanceId === instance.instanceId)) {
+        renderSceneStage(sceneStore.active);
+      }
+    }, durationMs);
+  }
+  sceneOverrides.set(instance.instanceId, active);
+  elements.status.textContent = durationMs > 0
+    ? `${instance.displayName}：临时动作“${state.label}”，${(durationMs / 1000).toFixed(1)} 秒后恢复常驻动作。`
+    : `${instance.displayName}：临时动作“${state.label}”；可用“恢复常驻”结束。`;
+  renderSceneStage(sceneStore.active);
 }
 
 async function loadSceneManifest(entry) {
@@ -500,21 +532,68 @@ function renderSceneEditor() {
     const remove = document.createElement("button");
     remove.type = "button"; remove.className = "secondary-button"; remove.textContent = "移除";
     remove.addEventListener("click", () => { active.characters = active.characters.filter((item) => item !== instance); sceneStore.update(active); renderSceneEditor(); });
-    const statePicker = document.createElement("select");
-    statePicker.setAttribute("aria-label", `${instance.displayName} 的当前动作`);
     const entry = characterEntry(instance.characterId);
-    statePicker.disabled = true;
+    let loadedCharacterManifest = null;
+    const basePicker = document.createElement("select");
+    basePicker.setAttribute("aria-label", `${instance.displayName} 的常驻动作`);
+    basePicker.disabled = true;
+    const overridePicker = document.createElement("select");
+    overridePicker.setAttribute("aria-label", `${instance.displayName} 的临时动作`);
+    overridePicker.disabled = true;
+    const playOverride = document.createElement("button");
+    playOverride.type = "button";
+    playOverride.className = "secondary-button";
+    playOverride.textContent = "播放";
+    playOverride.disabled = true;
+    const clearOverride = document.createElement("button");
+    clearOverride.type = "button";
+    clearOverride.className = "secondary-button";
+    clearOverride.textContent = "恢复常驻";
+    clearOverride.addEventListener("click", () => {
+      clearSceneOverride(instance.instanceId);
+      renderSceneStage(sceneStore.active);
+    });
+    const actionTools = document.createElement("div");
+    actionTools.className = "instance-action-tools";
+    const baseLabel = document.createElement("label");
+    baseLabel.append(document.createTextNode("常驻动作"), basePicker);
+    const overrideLabel = document.createElement("label");
+    overrideLabel.append(document.createTextNode("临时动作"), overridePicker);
+    actionTools.append(baseLabel, overrideLabel, playOverride, clearOverride);
     loadSceneManifest(entry).then((characterManifest) => {
-        if (!statePicker.isConnected) return;
-        for (const state of characterManifest.states || []) {
+        if (!basePicker.isConnected) return;
+        loadedCharacterManifest = characterManifest;
+        const characterStates = characterManifest.states || [];
+        const currentState = characterStates.some((state) => state.id === (instance.currentState || instance.initialState))
+          ? instance.currentState || instance.initialState
+          : characterManifest.defaultState;
+        for (const state of characterStates) {
           const option = document.createElement("option");
-          option.value = state.id; option.textContent = state.label; option.selected = (instance.currentState || instance.initialState || characterManifest.defaultState) === state.id;
-          statePicker.append(option);
+          option.value = state.id; option.textContent = state.label;
+          basePicker.append(option);
+          const behavior = { ...defaultBehaviorForGroup(state.group), ...state.behavior };
+          if (behavior.mode === "override") {
+            const temporaryOption = document.createElement("option");
+            temporaryOption.value = state.id; temporaryOption.textContent = state.label;
+            overridePicker.append(temporaryOption);
+          }
         }
-        statePicker.disabled = false;
-      }).catch((error) => { if (statePicker.isConnected) elements.status.textContent = error.message; });
-    statePicker.addEventListener("change", () => updateSceneInstance(instance, { currentState: statePicker.value }));
-    controls.append(name, statePicker, enabled, remove);
+        basePicker.value = currentState;
+        if (!overridePicker.options.length) {
+          const empty = document.createElement("option"); empty.textContent = "没有临时动作"; empty.value = ""; overridePicker.append(empty);
+        } else {
+          const placeholder = document.createElement("option"); placeholder.textContent = "选择要播放的动作"; placeholder.value = ""; placeholder.selected = true; overridePicker.prepend(placeholder);
+        }
+        basePicker.disabled = false;
+        overridePicker.disabled = false;
+        playOverride.disabled = overridePicker.options.length <= 1;
+      }).catch((error) => { if (basePicker.isConnected) elements.status.textContent = error.message; });
+    basePicker.addEventListener("change", () => updateSceneInstance(instance, { currentState: basePicker.value }));
+    playOverride.addEventListener("click", () => {
+      const state = loadedCharacterManifest?.states.find((item) => item.id === overridePicker.value);
+      if (state) playSceneOverride(instance, state);
+    });
+    controls.append(name, enabled, remove);
     const transform = document.createElement("div");
     transform.className = "transform-controls";
     for (const [key, label, min, max, step] of [["x", "X", 0, 1, .01], ["y", "Y", 0, 1, .01], ["scale", "缩放", .1, 3, .05]]) {
@@ -537,7 +616,7 @@ function renderSceneEditor() {
     front.addEventListener("click", () => { instance.transform.zIndex = Math.max(...active.characters.map((item) => item.transform.zIndex || 0)) + 1; sceneStore.update(active); renderSceneEditor(); });
     back.addEventListener("click", () => { instance.transform.zIndex = Math.min(...active.characters.map((item) => item.transform.zIndex || 0)) - 1; sceneStore.update(active); renderSceneEditor(); });
     move.append(left, right, up, down, front, back);
-    card.append(summary, controls, transform, move);
+    card.append(summary, controls, actionTools, transform, move);
     card.addEventListener("dragover", (event) => event.preventDefault());
     card.addEventListener("drop", (event) => {
       if (!event.dataTransfer?.files?.length) return;
@@ -566,7 +645,7 @@ function renderSceneStage(scene) {
   for (const instance of visibleInstances) {
     const entry = characterEntry(instance.characterId);
     if (!entry) continue;
-    const stateId = instance.currentState || instance.initialState;
+    const stateId = sceneOverrides.get(instance.instanceId)?.stateId || instance.currentState || instance.initialState;
     const stateUrl = resolveRegisteredCharacterManifestUrl(entry, location.href);
     const image = document.createElement("img");
     image.className = "scene-instance";

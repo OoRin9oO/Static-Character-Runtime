@@ -195,6 +195,16 @@ h1 { margin: 0; font-size: clamp(1.7rem, 4vw, 2.5rem); }
   min-width: 0; flex: 1; padding: 6px; border: 1px solid rgba(255,255,255,.12);
   border-radius: 8px; background: #171a25; color: #f6f7fb;
 }
+.instance-action-tools {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  align-items: end; gap: 7px; margin-top: 9px;
+}
+.instance-action-tools label { display: grid; gap: 4px; color: #aeb2c3; font-size: .68rem; }
+.instance-action-tools select {
+  width: 100%; min-width: 0; padding: 7px; border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px; background: #171a25; color: #f6f7fb;
+}
+.instance-action-tools button { padding: 7px 9px; }
 .transform-controls label { flex: 1; color: #aeb2c3; font-size: .68rem; }
 .transform-controls input { width: 100%; margin-top: 4px; }
 .instance-move button { padding: 5px 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 7px; background: transparent; color: #c9ccda; cursor: pointer; }
@@ -205,13 +215,16 @@ h1 { margin: 0; font-size: clamp(1.7rem, 4vw, 2.5rem); }
 body.live-mode .scene-instance { pointer-events: none; cursor: default; }
 body.scene-editor-mode .stage > .character-layer, body.scene-editor-mode .stage > .stage-glow { display: none !important; }
 body.scene-editor-mode .scene-instance { display: block !important; visibility: visible !important; opacity: 1 !important; }
+body.scene-editor-mode .current-card, body.scene-editor-mode .state-groups { display: none; }
 .shortcut-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .shortcut-list button {
   padding: 7px 10px; border: 1px solid rgba(199,125,255,.35); border-radius: 999px;
   background: rgba(199,125,255,.1); color: #e7e8ef; cursor: pointer;
 }
 .asset-panel { margin-top: 18px; padding: 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 13px; }
-.asset-panel h2 { margin: 0 0 10px; color: #c9ccda; font-size: .82rem; }
+.asset-panel > summary { cursor: pointer; color: #c9ccda; font-size: .82rem; font-weight: 700; }
+.asset-panel[open] > summary { margin-bottom: 10px; }
+.asset-panel.nested-editor { margin-top: 12px; padding: 10px; }
 .asset-targets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 .asset-targets select, .asset-import-row input, .asset-import-row select {
   min-width: 0; padding: 7px; border: 1px solid rgba(255,255,255,.12);
@@ -293,8 +306,9 @@ body.scene-editor-mode .scene-instance { display: block !important; visibility: 
 .editor-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .transition-editor > p { margin: 10px 0 0; color: #777d91; font-size: .7rem; }
 
-.event-panel { margin-top: 18px; }
-.event-panel h2 { margin: 0 0 9px; color: #c9ccda; font-size: .82rem; }
+.event-panel { margin-top: 18px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 12px; }
+.event-panel summary { cursor: pointer; color: #c9ccda; font-size: .82rem; font-weight: 700; }
+.event-panel[open] summary { margin-bottom: 10px; }
 .event-panel p { margin: 8px 0 0; color: #777d91; font-size: .7rem; }
 .event-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .event-controls select {
@@ -379,4 +393,6 @@ body.live-mode .exit-live-mode:hover, body.live-mode .exit-live-mode:focus-visib
   .manifest-loader, .shortcut-editor, .asset-targets { grid-template-columns: 1fr; }
   .scene-toolbar { grid-template-columns: 1fr; }
   .asset-import-row { grid-template-columns: 1fr 1fr; }
+  .instance-action-tools { grid-template-columns: 1fr 1fr; }
+  .instance-action-tools button { width: 100%; }
 }

@@ -50,7 +50,7 @@
             <button id="add-instance" class="secondary-button" type="button">添加角色实例</button>
             <button id="edit-instance-limits" class="secondary-button" type="button">场景实例上限</button>
           </div>
-          <small>同一角色每个场景仅保留一个实例；可直接拖动立绘，数字框与方向键用于微调位置。</small>
+          <small>同一角色每个场景仅保留一个实例；在角色卡中可分别预览常驻动作和临时动作。立绘可拖动，数字框与方向键用于微调位置。</small>
           <div id="scene-instances" class="scene-instances"></div>
           <div class="manifest-loader">
             <input id="manifest-input" type="text" placeholder="角色清单路径，例如 ./characters/demo/character.json" />
@@ -105,14 +105,14 @@
           <p>仅调整当前页面预览，不会修改角色配置文件。</p>
         </details>
 
-        <section class="event-panel">
-          <h2>事件模拟器</h2>
+        <details class="event-panel">
+          <summary>事件模拟器</summary>
           <div class="event-controls">
             <select id="event-type" aria-label="测试事件"></select>
             <button id="send-event" class="secondary-button" type="button">发送事件</button>
           </div>
           <p>通过统一入口模拟聊天或任务事件。</p>
-        </section>
+        </details>
 
         <details class="intent-panel">
           <summary>动作建议模拟器（未连接 AI）</summary>
@@ -134,8 +134,8 @@
           <div id="shortcut-list" class="shortcut-list"></div>
           <p>快捷项保存在本浏览器，不修改角色包；双击快捷项可移除。</p>
         </section>
-        <section class="asset-panel">
-          <h2>素材与动作管理</h2>
+        <details class="asset-panel">
+          <summary>素材与动作管理</summary>
           <label class="drop-zone" id="asset-drop-zone">
             拖入图片，或选择图片 / ZIP 包
             <input id="asset-files" type="file" accept="image/*,.zip,application/zip" multiple />
@@ -151,8 +151,8 @@
           <div id="asset-import-list" class="asset-import-list"></div>
           <button id="commit-assets" class="secondary-button" type="button" disabled>确认导入</button>
           <p>导入内容先预览并确认角色与分区，再写入本地角色目录。</p>
-        </section>
-        <details id="action-editor" class="asset-panel">
+        </details>
+        <details id="action-editor" class="asset-panel nested-editor">
           <summary>动作名称编辑器</summary>
           <div id="action-editor-list" class="asset-import-list"></div>
         </details>
