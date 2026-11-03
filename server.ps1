@@ -291,6 +291,8 @@ if (-not $SessionApiKeys.ContainsKey("bigmodel") -and $PromptForApiKey) {
 }
 
 $Listener = $null
+$LiveSnapshot = $null
+$LiveRevision = 0
 
 try {
     foreach ($CandidatePort in $PreferredPort..($PreferredPort + 10)) {
@@ -328,6 +330,22 @@ try {
             $Stream = $Client.GetStream()
             $Request = Read-HttpRequest $Stream
             $RequestPath = ($Request.Target -split "\?", 2)[0]
+
+            if ($RequestPath -eq "/api/live-state" -and $Request.Method -eq "GET") {
+                Send-Json $Stream 200 "OK" @{ revision = $LiveRevision; scene = $LiveSnapshot }
+                continue
+            }
+            if ($RequestPath -eq "/api/live-state" -and $Request.Method -eq "POST") {
+                try {
+                    if ($Request.ContentType -notmatch '^application/json') { throw "Content-Type must be application/json." }
+                    $Candidate = $Request.Body | ConvertFrom-Json
+                    if (-not $Candidate.id -or $Candidate.characters -isnot [array] -or @($Candidate.characters).Count -gt 30) { throw "Invalid scene snapshot." }
+                    $LiveSnapshot = $Candidate
+                    $LiveRevision++
+                    Send-Json $Stream 200 "OK" @{ ok = $true; revision = $LiveRevision }
+                } catch { Send-Json $Stream 400 "Bad Request" @{ error = "Invalid scene snapshot." } }
+                continue
+            }
 
             if ($Request.Method -eq "POST" -and $RequestPath -eq "/api/chat") {
                 $Result = Invoke-CharacterChat $Request.Body
@@ -434,6 +452,10 @@ try {
                     $Manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
                     $RequestedStateId = [string]$Import.stateId
                     $ExistingState = $null
+                    if (-not $RequestedStateId) {
+                        $ExistingState = @($Manifest.states | Where-Object { [string]$_.image -ieq $ImagePath }) | Select-Object -First 1
+                        if ($ExistingState) { $RequestedStateId = [string]$ExistingState.id }
+                    }
                     if ($RequestedStateId) {
                         if ($RequestedStateId -notmatch '^[a-zA-Z][a-zA-Z0-9_-]{0,63}$') { throw "State id is invalid." }
                         $ExistingState = @($Manifest.states | Where-Object { $_.id -eq $RequestedStateId }) | Select-Object -First 1

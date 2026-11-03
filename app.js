@@ -101,6 +101,11 @@ let sceneRenderToken = 0;
 let selectedInstanceId = null;
 const sceneManifestCache = new Map();
 const sceneOverrides = new Map();
+let livePending = null;
+let liveSending = false;
+let lastPublished = "";
+let liveRevision = -1;
+let lastObservedScene = "";
 
 const DEFAULT_TRANSITION = { type: "crossfade", durationMs: 220, distancePx: 18 };
 const TRANSITION_CLASSES = ["transition-bounce", "transition-pop", "transition-none"];
@@ -166,6 +171,11 @@ function applyTransitionSettings(settings) {
 }
 
 function previewTransition() {
+  if (selectedInstanceId) {
+    const image = [...document.querySelectorAll(".scene-instance")].find((item) => item.dataset.instanceId === selectedInstanceId);
+    if (image) animateSceneImage(image, transitionSettings);
+    return;
+  }
   const layer = elements.layers[activeLayer];
   if (!layer || activeStateId === null) return;
   layer.classList.remove("is-visible");
@@ -174,17 +184,36 @@ function previewTransition() {
 }
 
 function bindTransitionEditor() {
+  const update = (settings) => {
+    applyTransitionSettings(settings);
+    const instance = sceneStore?.active.characters.find((item) => item.instanceId === selectedInstanceId);
+    if (instance) {
+      instance.transition = { ...transitionSettings };
+      sceneStore.update(sceneStore.active);
+      publishLiveScene(sceneStore.active);
+    }
+  };
   elements.transitionType.addEventListener("change", () => {
-    applyTransitionSettings({ ...transitionSettings, type: elements.transitionType.value });
+    update({ ...transitionSettings, type: elements.transitionType.value });
   });
   elements.transitionDuration.addEventListener("input", () => {
-    applyTransitionSettings({ ...transitionSettings, durationMs: Number(elements.transitionDuration.value) });
+    update({ ...transitionSettings, durationMs: Number(elements.transitionDuration.value) });
   });
   elements.transitionDistance.addEventListener("input", () => {
-    applyTransitionSettings({ ...transitionSettings, distancePx: Number(elements.transitionDistance.value) });
+    update({ ...transitionSettings, distancePx: Number(elements.transitionDistance.value) });
   });
   elements.previewTransition.addEventListener("click", previewTransition);
-  elements.resetTransition.addEventListener("click", () => applyTransitionSettings(manifest.transition));
+  elements.resetTransition.addEventListener("click", async () => {
+    const instance = sceneStore?.active.characters.find((item) => item.instanceId === selectedInstanceId);
+    if (!instance) { applyTransitionSettings(manifest.transition); return; }
+    try {
+      const character = await loadSceneManifest(characterEntry(instance.characterId));
+      delete instance.transition;
+      sceneStore.update(sceneStore.active);
+      applyTransitionSettings(character.transition);
+      publishLiveScene(sceneStore.active);
+    } catch (error) { elements.status.textContent = error.message; }
+  });
 }
 
 async function renderSnapshot(snapshot, allowFallback = true, fallbackMessage = "") {
@@ -248,16 +277,23 @@ async function renderSnapshot(snapshot, allowFallback = true, fallbackMessage = 
 }
 
 function activateState(state) {
+  const instance = sceneStore?.active.characters.find((item) => item.instanceId === selectedInstanceId);
+  if (instance) {
+    const behavior = { ...defaultBehaviorForGroup(state.group), ...state.behavior };
+    if (behavior.mode === "override") playSceneOverride(instance, state);
+    else updateSceneInstance(instance, { currentState: state.id });
+    return;
+  }
   eventDispatcher.dispatch({
     type: "state_requested",
     payload: { stateId: state.id, source: "control_panel" },
   });
 }
 
-function renderControls() {
-  const labels = manifest.groups || {};
+function renderControls(sourceManifest = manifest) {
+  const labels = sourceManifest.groups || {};
   const grouped = new Map();
-  for (const state of manifest.states) {
+  for (const state of sourceManifest.states) {
     const rawGroupId = state.group || "other";
     const groupId = Object.keys(labels).find((key) => key.toLowerCase() === rawGroupId.toLowerCase()) || rawGroupId;
     if (!grouped.has(groupId)) grouped.set(groupId, []);
@@ -425,7 +461,7 @@ async function bindCharacterTools() {
   elements.openLiveMode.addEventListener("click", () => {
     const url = new URL(location.href);
     url.searchParams.set("mode", "live");
-    location.assign(url);
+    window.open(url.href, "_blank", "noopener");
   });
   elements.exitLiveMode.addEventListener("click", () => {
     const url = new URL(location.href);
@@ -489,6 +525,7 @@ function characterEntry(id) {
 
 function renderSceneEditor() {
   const active = sceneStore.active;
+  renderBroadcast(active);
   if (!active.characters.some((item) => item.instanceId === selectedInstanceId)) selectedInstanceId = null;
   elements.scenePicker.replaceChildren();
   for (const scene of sceneStore.scenes) {
@@ -548,7 +585,7 @@ function renderSceneEditor() {
     const playOverride = document.createElement("button");
     playOverride.type = "button";
     playOverride.className = "secondary-button";
-    playOverride.textContent = "播放";
+    playOverride.textContent = "执行下一动作";
     playOverride.disabled = true;
     const clearOverride = document.createElement("button");
     clearOverride.type = "button";
@@ -563,7 +600,7 @@ function renderSceneEditor() {
     const baseLabel = document.createElement("label");
     baseLabel.append(document.createTextNode("常驻动作"), basePicker);
     const overrideLabel = document.createElement("label");
-    overrideLabel.append(document.createTextNode("临时动作"), overridePicker);
+    overrideLabel.append(document.createTextNode("预输入动作（临时）"), overridePicker);
     actionTools.append(baseLabel, overrideLabel, playOverride, clearOverride);
     loadSceneManifest(entry).then((characterManifest) => {
         if (!basePicker.isConnected) return;
@@ -636,11 +673,27 @@ function renderSceneEditor() {
 
 function selectSceneInstance(instanceId) {
   selectedInstanceId = instanceId;
+  elements.groups.replaceChildren();
   updateSelectionDisplay();
+  const instance = sceneStore.active.characters.find((item) => item.instanceId === instanceId);
+  if (instance) loadSceneManifest(characterEntry(instance.characterId)).then((data) => {
+    if (selectedInstanceId === instanceId) {
+      renderControls(data);
+      applyTransitionSettings(instance.transition || data.transition);
+      document.querySelector("#transition-target").textContent = `设置对象：${instance.displayName}（保存到当前场景）`;
+    }
+  }).catch((error) => { elements.status.textContent = error.message; });
 }
 
 function updateSelectionDisplay() {
   const selected = sceneStore?.active.characters.find((item) => item.instanceId === selectedInstanceId);
+  const needsSelection = !selected && sceneStore?.active.characters.some((item) => item.enabled);
+  for (const control of [elements.transitionType, elements.transitionDuration, elements.transitionDistance, elements.previewTransition, elements.resetTransition]) control.disabled = Boolean(needsSelection);
+  if (!selected) {
+    document.querySelector("#transition-target").textContent = needsSelection ? "请先选中场景中的角色。" : "设置对象：当前角色（页面预览）";
+    if (!needsSelection) applyTransitionSettings(manifest.transition);
+  }
+  document.body.classList.toggle("has-selected-instance", Boolean(selected));
   const summary = document.querySelector("#selection-summary");
   summary.textContent = selected ? `${selected.displayName} · 当前基础动作：${selected.currentState || selected.initialState}` : "未选中角色：请单击画布中的角色，或展开下方角色卡。";
   document.querySelectorAll(".instance-card").forEach((card) => {
@@ -654,12 +707,17 @@ function updateSelectionDisplay() {
 }
 
 function renderSceneStage(scene) {
+  publishLiveScene(scene);
   const renderToken = ++sceneRenderToken;
   const stage = document.querySelector(".stage");
   const visibleInstances = [...scene.characters]
     .filter((item) => item.enabled)
     .sort((a, b) => a.transform.zIndex - b.transform.zIndex);
-  stage.querySelectorAll(".scene-instance").forEach((node) => node.remove());
+  const previous = new Map();
+  stage.querySelectorAll(".scene-instance").forEach((node) => {
+    if (node.dataset.instanceId) previous.set(node.dataset.instanceId, { state: node.dataset.stateId, src: node.src });
+    node.remove();
+  });
   if (visibleInstances.length === 0) {
     document.body.classList.remove("scene-editor-mode");
     stage.querySelectorAll(".character-layer, .stage-glow").forEach((node) => node.hidden = false);
@@ -677,6 +735,7 @@ function renderSceneStage(scene) {
     image.classList.toggle("is-selected", instance.instanceId === selectedInstanceId);
     image.alt = instance.displayName;
     image.dataset.instanceId = instance.instanceId;
+    image.dataset.stateId = stateId;
     image.style.left = `${instance.transform.x * 100}%`;
     image.style.top = `${(1 - instance.transform.y) * 100}%`;
     image.style.transform = `translate(-50%, -50%) scale(${instance.transform.scale})`;
@@ -692,9 +751,37 @@ function renderSceneStage(scene) {
       const state = characterManifest.states.find((item) => item.id === stateId) || characterManifest.states.find((item) => item.id === characterManifest.defaultState);
       if (!state) return;
       image.onerror = () => { elements.status.textContent = `实例 ${instance.displayName} 的图片无法加载：${state.image}`; };
+      const prior = previous.get(instance.instanceId);
+      const settings = { ...DEFAULT_TRANSITION, ...characterManifest.transition, ...instance.transition };
+      if (prior?.state && prior.state !== stateId) {
+        image.onload = () => {
+          if (renderToken !== sceneRenderToken) return;
+          animateSceneImage(image, settings, prior.src);
+        };
+      }
       image.src = new URL(state.image, new URL("./", stateUrl)).href + `?v=${Date.now()}`;
     }).catch((error) => { if (renderToken === sceneRenderToken) elements.status.textContent = error.message; });
   }
+}
+
+function animateSceneImage(image, settings, previousSrc = "") {
+  const duration = Math.max(0, Math.min(5000, Number(settings.durationMs) || 0));
+  if (settings.type === "none" || !duration) return;
+  const transform = image.style.transform;
+  const distance = Math.max(0, Math.min(200, Number(settings.distancePx) || 0));
+  let frames = [{ opacity: 0 }, { opacity: 1 }];
+  if (settings.type === "bounce") frames = [{ opacity: 0, transform: `${transform} translateY(${distance}px)` }, { opacity: 1, transform: `${transform} translateY(${-distance * .35}px)`, offset: .55 }, { opacity: 1, transform }];
+  if (settings.type === "pop") frames = [{ opacity: 0, transform: `${transform} scale(.86)` }, { opacity: 1, transform }];
+  if (previousSrc && settings.type === "crossfade") {
+    const old = image.cloneNode();
+    old.removeAttribute("data-instance-id");
+    old.classList.remove("is-selected");
+    old.style.pointerEvents = "none";
+    old.src = previousSrc;
+    image.before(old);
+    old.animate([{ opacity: 1 }, { opacity: 0 }], { duration, easing: "ease" }).finished.then(() => old.remove(), () => old.remove());
+  }
+  image.animate(frames, { duration, easing: "ease" });
 }
 
 function bindSceneImageDrag(image, instance, scene, stage) {
@@ -748,6 +835,7 @@ function addCharacterInstance() {
 
 function bindSceneEditor() {
   sceneStore = new SceneStore({ characterIds: new Set(characterRegistry.characters.map((item) => item.id)) });
+  bindBroadcastFields();
   const refresh = () => renderSceneEditor();
   elements.scenePicker.addEventListener("change", () => { sceneStore.select(elements.scenePicker.value); refresh(); });
   elements.newScene.addEventListener("click", () => {
@@ -764,6 +852,7 @@ function bindSceneEditor() {
     const copy = createScene(`${source.name} 副本`, source.characters);
     copy.interaction = structuredClone(source.interaction);
     copy.events = structuredClone(source.events);
+    if (source.broadcast) copy.broadcast = structuredClone(source.broadcast);
     copy.characters.forEach((item) => { item.instanceId = crypto.randomUUID(); });
     sceneStore.add(copy); refresh();
   });
@@ -806,6 +895,104 @@ function bindSceneEditor() {
     if (item) { item.label = event.target.value.trim() || item.file.name.replace(/\.[^.]+$/, ""); refreshPendingCharacterManifest(); }
   });
   refresh();
+}
+
+function bindBroadcastFields() {
+  for (const key of ["current", "next", "speaker", "answer"]) {
+    document.querySelector(`#broadcast-${key}`).addEventListener("input", (event) => {
+      const scene = sceneStore.active;
+      scene.broadcast = { ...scene.broadcast, [key]: event.target.value };
+      sceneStore.update(scene);
+      renderBroadcast(scene);
+    });
+  }
+  for (const box of ["question", "reply"]) {
+    for (const field of ["x", "y", "width"]) {
+      document.querySelector(`#broadcast-${box}-${field}`).addEventListener("change", (event) => {
+        const input = event.target;
+        const value = Math.max(field === "width" ? 10 : 0, Math.min(100, Number(input.value) || 0));
+        const scene = sceneStore.active;
+        const broadcast = scene.broadcast || {};
+        const layout = broadcast.layout || {};
+        scene.broadcast = { ...broadcast, layout: { ...layout, [box]: { ...layout[box], [field]: value } } };
+        sceneStore.update(scene);
+        renderBroadcast(scene);
+      });
+    }
+  }
+  window.addEventListener("storage", (event) => {
+    if (document.body.classList.contains("live-mode")) return;
+    if (event.key !== "static-character-runtime.scenes.v1" && event.key !== "static-character-runtime.active-scene.v1") return;
+    sceneStore = new SceneStore({ characterIds: new Set(characterRegistry.characters.map((item) => item.id)) });
+    renderSceneEditor();
+  });
+}
+
+function renderBroadcast(scene) {
+  publishLiveScene(scene);
+  const data = scene.broadcast || {};
+  for (const key of ["current", "next", "speaker", "answer"]) {
+    const input = document.querySelector(`#broadcast-${key}`);
+    if (document.activeElement !== input) input.value = data[key] || "";
+  }
+  const question = document.querySelector("#broadcast-question");
+  const reply = document.querySelector("#broadcast-reply");
+  for (const [box, element, defaults] of [["question", question, { x: 10, y: 3, width: 80 }], ["reply", reply, { x: 10, y: 78, width: 80 }]]) {
+    const layout = { ...defaults, ...data.layout?.[box] };
+    for (const field of ["x", "y", "width"]) document.querySelector(`#broadcast-${box}-${field}`).value = layout[field];
+    element.style.left = `${layout.x}%`;
+    element.style.top = `${layout.y}%`;
+    element.style.width = `${layout.width}%`;
+    element.style.bottom = "auto";
+  }
+  question.textContent = [data.current && `正在回答：${data.current}`, data.next && `下一个问题：${data.next}`].filter(Boolean).join("\n");
+  reply.textContent = [data.speaker && `${data.speaker}：`, data.answer].filter(Boolean).join("\n");
+  question.hidden = !question.textContent;
+  reply.hidden = !reply.textContent;
+}
+
+function publishLiveScene(scene) {
+  if (!scene || document.body.classList.contains("live-mode")) return;
+  const snapshot = structuredClone(scene);
+  for (const instance of snapshot.characters) {
+    instance.currentState = sceneOverrides.get(instance.instanceId)?.stateId || instance.currentState || instance.initialState;
+  }
+  const body = JSON.stringify(snapshot);
+  if (!liveSending && !livePending && body === lastPublished) return;
+  livePending = body;
+  if (!liveSending) sendLiveScene();
+}
+
+async function sendLiveScene() {
+  liveSending = true;
+  while (livePending) {
+    const body = livePending;
+    livePending = null;
+    try {
+      const response = await fetch("./api/live-state", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      lastPublished = body;
+    } catch {
+      elements.status.textContent = "直播画面同步失败，请确认本地服务正在运行。";
+      break;
+    }
+  }
+  liveSending = false;
+}
+
+async function pollLiveScene() {
+  try {
+    const response = await fetch("./api/live-state", { cache: "no-store" });
+    if (!response.ok) throw new Error();
+    const data = await response.json();
+    if (data.scene && (data.revision !== liveRevision || JSON.stringify(data.scene) !== lastObservedScene)) {
+      liveRevision = data.revision;
+      lastObservedScene = JSON.stringify(data.scene);
+      renderBroadcast(data.scene);
+      renderSceneStage(data.scene);
+    }
+  } catch { /* The next poll retries when the server returns. */ }
+  setTimeout(pollLiveScene, 500);
 }
 
 function renderAssetQueue() {
@@ -1010,6 +1197,11 @@ function bindChat() {
 
     let cooldownMs = 0;
     try {
+      const target = sceneStore.active.characters.find((item) => item.instanceId === selectedInstanceId);
+      if (sceneStore.active.characters.some((item) => item.enabled) && !target) {
+        throw new Error("请先在画布中选择要对话的角色。");
+      }
+      const targetManifest = target ? await loadSceneManifest(characterEntry(target.characterId)) : manifest;
       const response = await fetch("./api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1017,7 +1209,7 @@ function bindChat() {
           message,
           provider: activeAiConfig.provider,
           model: activeAiConfig.model,
-          states: manifest.states.map((state) => ({
+          states: targetManifest.states.map((state) => ({
             id: state.id,
             description: state.description || state.label,
           })),
@@ -1035,7 +1227,17 @@ function bindChat() {
       elements.chatReply.textContent = result.allowed
         ? result.reply
         : "抱歉，这个请求我不能协助。我们可以换一个安全、合适的话题。";
-      actionIntentController.submit(result.intent);
+      if (target) {
+        const activeTarget = sceneStore.active.characters.find((item) => item.instanceId === target.instanceId);
+        const state = targetManifest.states.find((item) => item.id === result.intent?.state);
+        if (activeTarget && state) {
+          const behavior = { ...defaultBehaviorForGroup(state.group), ...state.behavior };
+          if (behavior.mode === "override") playSceneOverride(activeTarget, state);
+          else updateSceneInstance(activeTarget, { currentState: state.id });
+        }
+      } else {
+        actionIntentController.submit(result.intent);
+      }
       elements.chatInput.value = "";
     } catch (error) {
       eventDispatcher.dispatch({ type: "assistant_response_finished", payload: { source: "chat" } });
@@ -1128,6 +1330,7 @@ async function start() {
     bindIntentSimulator();
     await bindCharacterTools();
     bindSceneEditor();
+    if (isLiveMode) pollLiveScene();
     bindShortcutEditor();
     await loadModelOptions();
     bindChat();

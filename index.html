@@ -25,6 +25,8 @@
             <div class="stage-glow"></div>
             <img class="character-layer" alt="" />
             <img class="character-layer" alt="" />
+            <div class="broadcast-question" id="broadcast-question"></div>
+            <div class="broadcast-reply" id="broadcast-reply"></div>
           </div>
           <div class="current-card">
             <span class="eyebrow">当前状态</span><strong id="current-label">正在加载……</strong>
@@ -44,6 +46,15 @@
           <div class="scene-toolbar"><button id="add-instance" class="primary-button" type="button">添加到场景</button><button id="edit-instance-limits" class="secondary-button" type="button">数量上限</button></div>
           <p class="hint">同一角色每个场景仅保留一个实例。可在画布拖动立绘，数字与箭头用于微调。</p>
           <h2 class="instances-heading">角色实例</h2><div id="scene-instances" class="scene-instances"></div>
+          <details class="advanced-tools"><summary>直播问答框</summary>
+            <label class="field-label">正在回答<input id="broadcast-current" type="text" /></label>
+            <label class="field-label">下一个问题<input id="broadcast-next" type="text" /></label>
+            <label class="field-label">发言角色<input id="broadcast-speaker" type="text" /></label>
+            <label class="field-label">角色回答<textarea id="broadcast-answer" rows="3"></textarea></label>
+            <label class="field-label">问题框：左 / 上 / 宽（%）<div class="broadcast-layout"><input id="broadcast-question-x" type="number" min="0" max="100" /><input id="broadcast-question-y" type="number" min="0" max="100" /><input id="broadcast-question-width" type="number" min="10" max="100" /></div></label>
+            <label class="field-label">回答框：左 / 上 / 宽（%）<div class="broadcast-layout"><input id="broadcast-reply-x" type="number" min="0" max="100" /><input id="broadcast-reply-y" type="number" min="0" max="100" /><input id="broadcast-reply-width" type="number" min="10" max="100" /></div></label>
+            <p class="hint">内容按场景保存；空内容不显示。可在编辑器修改并在 OBS 浏览器源中查看。</p>
+          </details>
           <details class="advanced-tools"><summary>高级工具</summary>
             <div class="manifest-loader"><input id="manifest-input" type="text" placeholder="角色清单路径" /><button id="load-manifest" class="secondary-button" type="button">加载角色</button></div>
             <button id="clear-overrides" class="secondary-button" type="button">清除当前角色临时状态</button>
@@ -85,11 +96,11 @@
   "durationMs": 2500,
   "reason": "模拟积极回应"
 }</textarea><button id="send-intent" class="secondary-button" type="button">校验并执行</button><p id="intent-result">等待动作建议。</p></details>
-          <details class="transition-editor"><summary>显示设置 · 过渡动画</summary><div class="editor-grid">
+          <details class="transition-editor"><summary>显示设置 · 过渡动画</summary><p id="transition-target">设置对象：当前角色（页面预览）</p><div class="editor-grid">
             <label>动画类型<select id="transition-type"><option value="crossfade">淡入淡出</option><option value="bounce">弹跳</option><option value="pop">弹出</option><option value="none">无动画</option></select></label>
             <label>时长 <output id="transition-duration-value">220 ms</output><input id="transition-duration" type="range" min="0" max="5000" step="10" /></label>
             <label id="transition-distance-row">弹跳幅度 <output id="transition-distance-value">18 px</output><input id="transition-distance" type="range" min="0" max="200" step="1" /></label>
-          </div><div class="editor-actions"><button id="preview-transition" class="secondary-button" type="button">预览</button><button id="reset-transition" class="secondary-button" type="button">恢复角色配置</button></div><p>仅调整当前页面预览，不会修改角色配置文件。</p></details>
+          </div><div class="editor-actions"><button id="preview-transition" class="secondary-button" type="button">预览</button><button id="reset-transition" class="secondary-button" type="button">恢复角色配置</button></div><p>场景角色的设置保存在当前场景；恢复后使用角色包默认设置。</p></details>
         </section>
       </section>
       <footer><span id="manifest-path"></span></footer>
