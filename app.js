@@ -98,6 +98,7 @@ let characterRegistry;
 let pendingAssets = [];
 let pendingCharacterManifest = null;
 let sceneRenderToken = 0;
+let selectedInstanceId = null;
 const sceneManifestCache = new Map();
 const sceneOverrides = new Map();
 
@@ -488,6 +489,7 @@ function characterEntry(id) {
 
 function renderSceneEditor() {
   const active = sceneStore.active;
+  if (!active.characters.some((item) => item.instanceId === selectedInstanceId)) selectedInstanceId = null;
   elements.scenePicker.replaceChildren();
   for (const scene of sceneStore.scenes) {
     const option = document.createElement("option");
@@ -497,12 +499,15 @@ function renderSceneEditor() {
     elements.scenePicker.append(option);
   }
   elements.sceneInstances.replaceChildren();
+  document.querySelector("#selected-controls").replaceChildren();
   for (const instance of active.characters) {
     const card = document.createElement("details");
     card.className = "instance-card";
-    card.open = true;
+    card.dataset.instanceId = instance.instanceId;
+    card.open = instance.instanceId === selectedInstanceId;
     const summary = document.createElement("summary");
     summary.textContent = `${instance.displayName}${instance.enabled ? "" : "（隐藏）"}`;
+    summary.addEventListener("click", (event) => { event.preventDefault(); selectSceneInstance(instance.instanceId); });
     const controls = document.createElement("div");
     controls.className = "instance-controls";
     const name = document.createElement("input");
@@ -626,6 +631,26 @@ function renderSceneEditor() {
     elements.sceneInstances.append(card);
   }
   renderSceneStage(active);
+  updateSelectionDisplay();
+}
+
+function selectSceneInstance(instanceId) {
+  selectedInstanceId = instanceId;
+  updateSelectionDisplay();
+}
+
+function updateSelectionDisplay() {
+  const selected = sceneStore?.active.characters.find((item) => item.instanceId === selectedInstanceId);
+  const summary = document.querySelector("#selection-summary");
+  summary.textContent = selected ? `${selected.displayName} · 当前基础动作：${selected.currentState || selected.initialState}` : "未选中角色：请单击画布中的角色，或展开下方角色卡。";
+  document.querySelectorAll(".instance-card").forEach((card) => {
+    const active = card.dataset.instanceId === selectedInstanceId;
+    card.classList.toggle("is-selected", active);
+    if (active) card.open = true;
+    else card.open = false;
+    (active ? document.querySelector("#selected-controls") : elements.sceneInstances).append(card);
+  });
+  document.querySelectorAll(".scene-instance").forEach((image) => image.classList.toggle("is-selected", image.dataset.instanceId === selectedInstanceId));
 }
 
 function renderSceneStage(scene) {
@@ -649,6 +674,7 @@ function renderSceneStage(scene) {
     const stateUrl = resolveRegisteredCharacterManifestUrl(entry, location.href);
     const image = document.createElement("img");
     image.className = "scene-instance";
+    image.classList.toggle("is-selected", instance.instanceId === selectedInstanceId);
     image.alt = instance.displayName;
     image.dataset.instanceId = instance.instanceId;
     image.style.left = `${instance.transform.x * 100}%`;
@@ -675,6 +701,7 @@ function bindSceneImageDrag(image, instance, scene, stage) {
   image.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
+    selectSceneInstance(instance.instanceId);
     image.setPointerCapture(event.pointerId);
     image.style.cursor = "grabbing";
     const rect = stage.getBoundingClientRect();
@@ -1034,6 +1061,7 @@ function bindChat() {
 
 async function start() {
   try {
+    bindDockTabs();
     const query = new URLSearchParams(location.search);
     const isLiveMode = query.get("mode") === "live";
     document.documentElement.classList.toggle("live-mode", isLiveMode);
@@ -1111,6 +1139,26 @@ async function start() {
     elements.id.textContent = "error";
     elements.description.textContent = error.message;
     elements.status.textContent = "请确认本地服务器已启动，并检查 character.json。";
+  }
+}
+
+function bindDockTabs() {
+  const tabs = [...document.querySelectorAll(".dock-tab")];
+  const panels = [...document.querySelectorAll(".dock-panel")];
+  for (const tab of tabs) {
+    tab.addEventListener("click", () => {
+      const selected = tab.dataset.tab;
+      for (const item of tabs) {
+        const active = item === tab;
+        item.classList.toggle("is-active", active);
+        item.setAttribute("aria-selected", String(active));
+      }
+      for (const panel of panels) {
+        const active = panel.dataset.panel === selected;
+        panel.classList.toggle("is-active", active);
+        panel.hidden = !active;
+      }
+    });
   }
 }
 

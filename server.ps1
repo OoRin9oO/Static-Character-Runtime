@@ -1,8 +1,8 @@
-param([switch]$NoBrowser, [switch]$PromptForApiKey, [string]$WorkspaceRoot)
+﻿param([switch]$NoBrowser, [switch]$PromptForApiKey, [string]$WorkspaceRoot)
 
 $ErrorActionPreference = "Stop"
 
-$Root = if ($WorkspaceRoot) { $WorkspaceRoot } elseif ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$Root = if ($WorkspaceRoot) { [IO.Path]::GetFullPath($WorkspaceRoot) } elseif ($PSScriptRoot) { [IO.Path]::GetFullPath($PSScriptRoot) } else { [IO.Path]::GetFullPath((Split-Path -Parent $MyInvocation.MyCommand.Path)) }
 $Address = [Net.IPAddress]::Loopback
 $PreferredPort = 4173
 $Port = $null

@@ -9,158 +9,90 @@
   </head>
   <body>
     <main class="app-shell">
-      <section class="stage-panel" aria-label="角色展示区">
-        <div class="stage">
-          <div class="stage-glow"></div>
-          <img class="character-layer" alt="" />
-          <img class="character-layer" alt="" />
+      <header class="editor-toolbar">
+        <div class="brand"><span class="eyebrow">STATIC CHARACTER RUNTIME</span><strong id="character-name">角色加载器</strong></div>
+        <label>场景 <select id="scene-picker"></select></label>
+        <div class="toolbar-actions">
+          <button id="new-scene" class="secondary-button" type="button">新建场景</button>
+          <button id="open-live-mode" type="button">OBS 预览</button>
         </div>
-        <div class="current-card">
-          <span class="eyebrow">当前状态</span>
-          <strong id="current-label">正在加载……</strong>
-          <code id="current-id">loading</code>
-          <p id="current-description">正在读取角色清单。</p>
-          <div class="state-details">
-            <span>基础：<code id="base-state">-</code></span>
-            <span>覆盖：<code id="override-state">无</code></span>
-            <span>事件：<code id="last-event">无</code></span>
-          </div>
-        </div>
-      </section>
+      </header>
 
-      <aside class="control-panel">
-        <header>
-          <p class="eyebrow">Static Character Runtime · V0.1</p>
-          <h1 id="character-name">角色加载器</h1>
-          <p class="intro">从角色清单生成状态按钮，并在完整立绘之间平滑切换。</p>
-        </header>
-        <section class="workspace-panel">
-          <h2>编辑测试台</h2>
-          <div class="scene-toolbar">
-            <label>场景 <select id="scene-picker"></select></label>
-            <button id="new-scene" class="secondary-button" type="button">新建</button>
+      <div class="editor-main">
+        <section class="stage-panel" aria-label="角色画布">
+          <div class="stage-toolbar"><strong>场景画布</strong><span>左键选择 · 拖动移动</span></div>
+          <div class="stage">
+            <div class="stage-glow"></div>
+            <img class="character-layer" alt="" />
+            <img class="character-layer" alt="" />
           </div>
-          <div class="scene-toolbar">
+          <div class="current-card">
+            <span class="eyebrow">当前状态</span><strong id="current-label">正在加载……</strong>
+            <code id="current-id">loading</code><span id="current-description">正在读取角色清单。</span>
+            <div class="state-details"><span>基础：<code id="base-state">-</code></span><span>覆盖：<code id="override-state">无</code></span><span>事件：<code id="last-event">无</code></span></div>
+          </div>
+        </section>
+
+        <aside class="inspector-panel">
+          <section class="selected-panel"><h2>角色状态</h2><p id="selection-summary">未选中角色：请单击画布中的角色，或展开下方角色卡。</p><div id="selected-controls"></div></section>
+          <div class="panel-heading"><div><span class="eyebrow">SCENE</span><h1>场景与角色</h1></div><button id="duplicate-scene" class="icon-button secondary-button" type="button" title="复制场景">复制</button></div>
+          <div class="scene-toolbar scene-management">
             <button id="rename-scene" class="secondary-button" type="button">重命名</button>
-            <button id="delete-scene" class="secondary-button" type="button">删除场景</button>
-            <button id="duplicate-scene" class="secondary-button" type="button">复制场景</button>
+            <button id="delete-scene" class="secondary-button" type="button">删除</button>
           </div>
-          <label>当前角色 <select id="character-picker" aria-label="选择角色"></select></label>
-          <div class="scene-toolbar">
-            <button id="add-instance" class="secondary-button" type="button">添加角色实例</button>
-            <button id="edit-instance-limits" class="secondary-button" type="button">场景实例上限</button>
-          </div>
-          <small>同一角色每个场景仅保留一个实例；在角色卡中可分别预览常驻动作和临时动作。立绘可拖动，数字框与方向键用于微调位置。</small>
-          <div id="scene-instances" class="scene-instances"></div>
-          <div class="manifest-loader">
-            <input id="manifest-input" type="text" placeholder="角色清单路径，例如 ./characters/demo/character.json" />
-            <button id="load-manifest" class="secondary-button" type="button">加载角色</button>
-          </div>
-          <button id="open-live-mode" type="button">开启 OBS 展示模式</button>
-          <small>直播模式只显示透明角色画面；不会连接直播间。</small>
+          <label class="field-label">添加角色<select id="character-picker" aria-label="选择角色"></select></label>
+          <div class="scene-toolbar"><button id="add-instance" class="primary-button" type="button">添加到场景</button><button id="edit-instance-limits" class="secondary-button" type="button">数量上限</button></div>
+          <p class="hint">同一角色每个场景仅保留一个实例。可在画布拖动立绘，数字与箭头用于微调。</p>
+          <h2 class="instances-heading">角色实例</h2><div id="scene-instances" class="scene-instances"></div>
+          <details class="advanced-tools"><summary>高级工具</summary>
+            <div class="manifest-loader"><input id="manifest-input" type="text" placeholder="角色清单路径" /><button id="load-manifest" class="secondary-button" type="button">加载角色</button></div>
+            <button id="clear-overrides" class="secondary-button" type="button">清除当前角色临时状态</button>
+          </details>
+        </aside>
+      </div>
+
+      <div id="status-message" class="status-message" role="status"></div>
+      <section class="editor-dock" aria-label="编辑器工具">
+        <nav class="dock-tabs" role="tablist" aria-label="编辑器分区">
+          <button class="dock-tab is-active" type="button" role="tab" aria-selected="true" data-tab="actions">动作资源</button>
+          <button class="dock-tab" type="button" role="tab" aria-selected="false" data-tab="package">角色包</button>
+          <button class="dock-tab" type="button" role="tab" aria-selected="false" data-tab="tests">测试工具</button>
+        </nav>
+        <section class="dock-panel is-active" role="tabpanel" data-panel="actions">
+          <section class="shortcut-panel"><div class="dock-section-heading"><h2>常用动作</h2><p>快捷项保存在本浏览器，双击移除。</p></div><div class="shortcut-editor"><select id="shortcut-state" aria-label="快捷动作状态"></select><button id="add-shortcut" class="secondary-button" type="button">添加</button></div><div id="shortcut-list" class="shortcut-list"></div></section>
+          <div id="state-groups" class="state-groups"></div>
         </section>
-        <div id="status-message" class="status-message" role="status"></div>
-        <button id="clear-overrides" class="secondary-button" type="button">清除临时状态</button>
-
-        <section class="chat-panel">
-          <h2>单轮对话</h2>
-          <div class="model-picker">
-            <select id="ai-provider" aria-label="AI 供应商"></select>
-            <select id="ai-model" aria-label="AI 模型"></select>
-            <button id="apply-model" class="secondary-button" type="button">应用模型</button>
-          </div>
-          <small id="active-model">正在读取模型配置……</small>
-          <p id="chat-reply" class="chat-reply">输入一句话，她会回复并选择相应动作。</p>
-          <form id="chat-form">
-            <textarea id="chat-input" rows="3" maxlength="2000" placeholder="对 GitHub娘说些什么……" required></textarea>
-            <button id="chat-send" type="submit">发送</button>
-          </form>
+        <section class="dock-panel" role="tabpanel" data-panel="package">
+          <details class="asset-panel" open><summary>素材导入</summary>
+            <label class="drop-zone" id="asset-drop-zone">拖入图片，或选择图片 / ZIP 包<input id="asset-files" type="file" accept="image/*,.zip,application/zip" multiple /></label>
+            <label class="drop-zone role-folder-zone">导入新角色文件夹（Basic / Emotion / Interact / Special）<input id="new-role-files" type="file" webkitdirectory directory multiple accept="image/*" /></label>
+            <div class="asset-targets"><select id="asset-character" aria-label="素材目标角色"></select><select id="asset-section" aria-label="素材目标分区"></select></div>
+            <div id="asset-import-list" class="asset-import-list"></div><button id="commit-assets" class="secondary-button" type="button" disabled>确认导入</button>
+            <p>导入内容先预览并确认角色与分区，再写入本地角色目录。</p>
+          </details>
+          <details id="action-editor" class="asset-panel nested-editor"><summary>编辑动作名称</summary><div id="action-editor-list" class="asset-import-list"></div></details>
         </section>
-
-        <details class="transition-editor">
-          <summary>过渡编辑器</summary>
-          <div class="editor-grid">
-            <label>
-              动画类型
-              <select id="transition-type">
-                <option value="crossfade">淡入淡出</option>
-                <option value="bounce">弹跳</option>
-                <option value="pop">弹出</option>
-                <option value="none">无动画</option>
-              </select>
-            </label>
-            <label>
-              时长 <output id="transition-duration-value">220 ms</output>
-              <input id="transition-duration" type="range" min="0" max="5000" step="10" />
-            </label>
-            <label id="transition-distance-row">
-              弹跳幅度 <output id="transition-distance-value">18 px</output>
-              <input id="transition-distance" type="range" min="0" max="200" step="1" />
-            </label>
-          </div>
-          <div class="editor-actions">
-            <button id="preview-transition" class="secondary-button" type="button">预览动画</button>
-            <button id="reset-transition" class="secondary-button" type="button">恢复角色配置</button>
-          </div>
-          <p>仅调整当前页面预览，不会修改角色配置文件。</p>
-        </details>
-
-        <details class="event-panel">
-          <summary>事件模拟器</summary>
-          <div class="event-controls">
-            <select id="event-type" aria-label="测试事件"></select>
-            <button id="send-event" class="secondary-button" type="button">发送事件</button>
-          </div>
-          <p>通过统一入口模拟聊天或任务事件。</p>
-        </details>
-
-        <details class="intent-panel">
-          <summary>动作建议模拟器（未连接 AI）</summary>
-          <textarea id="intent-input" rows="6" spellcheck="false">{
+        <section class="dock-panel tests-layout" role="tabpanel" data-panel="tests">
+          <section class="chat-panel"><div class="dock-section-heading"><h2>单轮对话</h2></div>
+            <div class="model-picker"><select id="ai-provider" aria-label="AI 供应商"></select><select id="ai-model" aria-label="AI 模型"></select><button id="apply-model" class="secondary-button" type="button">应用模型</button></div>
+            <small id="active-model">正在读取模型配置……</small><p id="chat-reply" class="chat-reply">输入一句话，她会回复并选择相应动作。</p>
+            <form id="chat-form"><textarea id="chat-input" rows="2" maxlength="2000" placeholder="对角色说些什么……" required></textarea><button id="chat-send" type="submit">发送</button></form>
+          </section>
+          <details class="event-panel"><summary>事件模拟</summary><div class="event-controls"><select id="event-type" aria-label="测试事件"></select><button id="send-event" class="secondary-button" type="button">发送事件</button></div><p>通过统一入口模拟聊天或任务事件。</p></details>
+          <details class="intent-panel"><summary>动作建议校验（未连接 AI）</summary><textarea id="intent-input" rows="4" spellcheck="false">{
   "state": "happy",
   "intensity": 0.7,
   "durationMs": 2500,
   "reason": "模拟积极回应"
-}</textarea>
-          <button id="send-intent" class="secondary-button" type="button">校验并执行</button>
-          <p id="intent-result">等待动作建议。</p>
-        </details>
-        <section class="shortcut-panel">
-          <h2>快捷动作</h2>
-          <div class="shortcut-editor">
-            <select id="shortcut-state" aria-label="快捷动作状态"></select>
-            <button id="add-shortcut" class="secondary-button" type="button">添加当前姿态</button>
-          </div>
-          <div id="shortcut-list" class="shortcut-list"></div>
-          <p>快捷项保存在本浏览器，不修改角色包；双击快捷项可移除。</p>
+}</textarea><button id="send-intent" class="secondary-button" type="button">校验并执行</button><p id="intent-result">等待动作建议。</p></details>
+          <details class="transition-editor"><summary>显示设置 · 过渡动画</summary><div class="editor-grid">
+            <label>动画类型<select id="transition-type"><option value="crossfade">淡入淡出</option><option value="bounce">弹跳</option><option value="pop">弹出</option><option value="none">无动画</option></select></label>
+            <label>时长 <output id="transition-duration-value">220 ms</output><input id="transition-duration" type="range" min="0" max="5000" step="10" /></label>
+            <label id="transition-distance-row">弹跳幅度 <output id="transition-distance-value">18 px</output><input id="transition-distance" type="range" min="0" max="200" step="1" /></label>
+          </div><div class="editor-actions"><button id="preview-transition" class="secondary-button" type="button">预览</button><button id="reset-transition" class="secondary-button" type="button">恢复角色配置</button></div><p>仅调整当前页面预览，不会修改角色配置文件。</p></details>
         </section>
-        <details class="asset-panel">
-          <summary>素材与动作管理</summary>
-          <label class="drop-zone" id="asset-drop-zone">
-            拖入图片，或选择图片 / ZIP 包
-            <input id="asset-files" type="file" accept="image/*,.zip,application/zip" multiple />
-          </label>
-          <label class="drop-zone role-folder-zone">
-            导入新角色文件夹（包含 Basic / Emotion / Interact / Special）
-            <input id="new-role-files" type="file" webkitdirectory directory multiple accept="image/*" />
-          </label>
-          <div class="asset-targets">
-            <select id="asset-character" aria-label="素材目标角色"></select>
-            <select id="asset-section" aria-label="素材目标分区"></select>
-          </div>
-          <div id="asset-import-list" class="asset-import-list"></div>
-          <button id="commit-assets" class="secondary-button" type="button" disabled>确认导入</button>
-          <p>导入内容先预览并确认角色与分区，再写入本地角色目录。</p>
-        </details>
-        <details id="action-editor" class="asset-panel nested-editor">
-          <summary>动作名称编辑器</summary>
-          <div id="action-editor-list" class="asset-import-list"></div>
-        </details>
-        <div id="state-groups" class="state-groups"></div>
-        <footer>
-          <span id="manifest-path"></span>
-        </footer>
-      </aside>
+      </section>
+      <footer><span id="manifest-path"></span></footer>
     </main>
     <button id="exit-live-mode" class="exit-live-mode" type="button">退出展示模式</button>
     <script type="module" src="./app.js"></script>
