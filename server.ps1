@@ -331,6 +331,65 @@ try {
             $Request = Read-HttpRequest $Stream
             $RequestPath = ($Request.Target -split "\?", 2)[0]
 
+            if ($Request.Method -eq "GET" -and $RequestPath -match '^/api/assets/catalog/([a-zA-Z0-9_-]{1,64})$') {
+                try {
+                    $CharacterRoot = Join-Path (Join-Path $Root "characters") $Matches[1]
+                    if (-not (Test-Path -LiteralPath (Join-Path $CharacterRoot "character.json") -PathType Leaf)) { throw "Character package not found." }
+                    $Files = @()
+                    foreach ($Directory in @(Get-ChildItem -LiteralPath $CharacterRoot -Directory)) {
+                        if ($Directory.Name.ToLowerInvariant() -notin @("basic", "emotion", "emo", "interact", "inter", "special", "spec")) { continue }
+                        if (($Directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+                        foreach ($File in @(Get-ChildItem -LiteralPath $Directory.FullName -File)) {
+                            if ($File.Extension.ToLowerInvariant() -notin @(".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif")) { continue }
+                            if (($File.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+                            $Files += @{ path = "$($Directory.Name)/$($File.Name)"; version = "$($File.LastWriteTimeUtc.Ticks)-$($File.Length)" }
+                        }
+                    }
+                    Send-Json $Stream 200 "OK" @{ files = @($Files | Sort-Object { $_.path }) }
+                } catch { Send-Json $Stream 404 "Not Found" @{ error = "Character package could not be scanned." } }
+                continue
+            }
+            if ($Request.Method -eq "POST" -and $RequestPath -eq "/api/assets/register-discovered") {
+                try {
+                    if ($Request.ContentType -notmatch '^application/json') { throw "Invalid content type." }
+                    $Data = $Request.Body | ConvertFrom-Json
+                    $Id = [string]$Data.characterId
+                    if ($Id -notmatch '^[a-zA-Z0-9_-]{1,64}$' -or @($Data.states).Count -gt 250) { throw "Invalid character or states." }
+                    $CharacterRoot = Join-Path (Join-Path $Root "characters") $Id
+                    $ManifestPath = Join-Path $CharacterRoot "character.json"
+                    $Manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ([string]$Manifest.id -ne $Id) { throw "Character identity mismatch." }
+                    $ExistingIds = @{}; $ExistingPaths = @{}
+                    foreach ($State in $Manifest.states) { $ExistingIds[[string]$State.id] = $true; $ExistingPaths[[string]$State.image] = $true }
+                    $Changed = $false
+                    foreach ($State in @($Data.states)) {
+                        $Path = [string]$State.image; $StateId = [string]$State.id
+                        if ($Path -notmatch '^(Basic|Emotion|Emo|Interact|Inter|Special|Spec)/([^/\\]+\.(png|jpg|jpeg|webp|gif|avif))$' -or $StateId -notmatch '^asset_[a-z0-9_]{1,54}$') { throw "Invalid discovered state." }
+                        if ($ExistingPaths.ContainsKey($Path)) { continue }
+                        if ($ExistingIds.ContainsKey($StateId)) { throw "State ID conflict; retry scan." }
+                        $FilePath = Join-Path $CharacterRoot ($Path.Replace('/', '\'))
+                        if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) { throw "Image no longer exists." }
+                        $FileInfo = Get-Item -LiteralPath $FilePath
+                        $ParentInfo = Get-Item -LiteralPath $FileInfo.DirectoryName
+                        if (($FileInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ($ParentInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Linked files and directories are not supported." }
+                        if ([string]$State.assetVersion -ne "$($FileInfo.LastWriteTimeUtc.Ticks)-$($FileInfo.Length)") { throw "Image changed during scan; retry." }
+                        if ([string]$State.label -notmatch '\S' -or ([string]$State.label).Length -gt 120 -or [string]$State.group -notin @('Basic','Emotion','Interact','Special')) { throw "Invalid state label or group." }
+                        $Manifest.states = @($Manifest.states) + @([pscustomobject]@{ id = $StateId; label = [string]$State.label; group = [string]$State.group; image = $Path })
+                        $ExistingIds[$StateId] = $true; $ExistingPaths[$Path] = $true; $Changed = $true
+                    }
+                    if (@($Manifest.states).Count -gt 250) { throw "A character package may contain at most 250 states." }
+                    if ($Changed) {
+                        $TempPath = "$ManifestPath.$([guid]::NewGuid().ToString('N')).tmp"
+                        try {
+                            [IO.File]::WriteAllText($TempPath, ($Manifest | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+                            Move-Item -LiteralPath $TempPath -Destination $ManifestPath -Force
+                        } finally { if (Test-Path -LiteralPath $TempPath) { Remove-Item -LiteralPath $TempPath -Force } }
+                    }
+                    Send-Json $Stream 200 "OK" @{ ok = $true; changed = $Changed }
+                } catch { Send-Json $Stream 400 "Bad Request" @{ error = $_.Exception.Message } }
+                continue
+            }
+
             if ($RequestPath -eq "/api/live-state" -and $Request.Method -eq "GET") {
                 Send-Json $Stream 200 "OK" @{ revision = $LiveRevision; scene = $LiveSnapshot }
                 continue

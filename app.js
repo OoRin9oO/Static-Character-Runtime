@@ -8,6 +8,7 @@ import { CharacterStateManager } from "./runtime/state-manager.js";
 import { CharacterEventDispatcher } from "./runtime/event-dispatcher.js";
 import { ActionIntentController } from "./runtime/action-intent-controller.js";
 import { LiveEventInterface } from "./runtime/live-event-interface.js";
+import { reconcileAssets } from "./runtime/asset-catalog.js";
 import {
   SceneStore, createScene, createCharacterInstance, validateScene,
   DEFAULT_SCENE_LIMITS, HARD_SCENE_LIMITS, LIMIT_STORAGE_KEY,
@@ -100,6 +101,8 @@ let pendingCharacterManifest = null;
 let sceneRenderToken = 0;
 let selectedInstanceId = null;
 const sceneManifestCache = new Map();
+const assetScanState = new Map();
+let lastLiveScene = null;
 const sceneOverrides = new Map();
 let livePending = null;
 let liveSending = false;
@@ -115,7 +118,9 @@ function stateById(id) {
 }
 
 function imageUrlFor(state) {
-  return resolveStateImageUrl(state, manifestUrl);
+  const url = new URL(resolveStateImageUrl(state, manifestUrl));
+  if (state.assetVersion) url.searchParams.set("v", state.assetVersion);
+  return url.href;
 }
 
 function setCurrentStateText(state, snapshot) {
@@ -217,6 +222,12 @@ function bindTransitionEditor() {
 }
 
 async function renderSnapshot(snapshot, allowFallback = true, fallbackMessage = "") {
+  if (!states.size) {
+    elements.layers.forEach((layer) => layer.classList.remove("is-visible"));
+    elements.label.textContent = "没有可用图片";
+    elements.description.textContent = "请向角色目录添加图片。";
+    return;
+  }
   const requestedId = snapshot.effectiveState;
   const state = stateById(requestedId);
   if (!state) {
@@ -413,9 +424,9 @@ function renderEventControls() {
     elements.eventType.append(option);
   }
   elements.sendEvent.disabled = elements.eventType.options.length === 0;
-  elements.sendEvent.addEventListener("click", () => {
+  elements.sendEvent.onclick = () => {
     eventDispatcher.dispatch({ type: elements.eventType.value, payload: { source: "simulator" } });
-  });
+  };
 }
 
 function bindIntentSimulator() {
@@ -988,11 +999,79 @@ async function pollLiveScene() {
     if (data.scene && (data.revision !== liveRevision || JSON.stringify(data.scene) !== lastObservedScene)) {
       liveRevision = data.revision;
       lastObservedScene = JSON.stringify(data.scene);
+      lastLiveScene = data.scene;
       renderBroadcast(data.scene);
       renderSceneStage(data.scene);
     }
   } catch { /* The next poll retries when the server returns. */ }
   setTimeout(pollLiveScene, 500);
+}
+
+async function syncAssetCatalog() {
+  if (!characterRegistry || pendingAssets.length) return;
+  let sceneChanged = false;
+  for (const entry of characterRegistry.characters || []) {
+    try {
+      const url = resolveRegisteredCharacterManifestUrl(entry, location.href);
+      const [manifestResponse, catalogResponse] = await Promise.all([
+        fetch(url, { cache: "no-store" }),
+        fetch(`./api/assets/catalog/${encodeURIComponent(entry.id)}`, { cache: "no-store" }),
+      ]);
+      if (!manifestResponse.ok || !catalogResponse.ok) continue;
+      const raw = await manifestResponse.json();
+      const catalog = await catalogResponse.json();
+      const signature = JSON.stringify([raw, catalog.files]);
+      const previous = assetScanState.get(entry.id) || {};
+      if (previous.seen !== signature) { assetScanState.set(entry.id, { ...previous, seen: signature }); continue; }
+      if (previous.applied === signature) continue;
+      let result = reconcileAssets(raw, catalog.files);
+      if (result.added.length && !document.body.classList.contains("live-mode")) {
+        const response = await fetch("./api/assets/register-discovered", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ characterId: entry.id, states: result.added }),
+        });
+        if (!response.ok) throw new Error((await response.json()).error || "登记新增动作失败。");
+        // The server merged the additions into the latest manifest; rescan before applying.
+        assetScanState.set(entry.id, {});
+        continue;
+      }
+      assetScanState.set(entry.id, { seen: signature, applied: signature });
+      sceneManifestCache.set(url.href, Promise.resolve(result.manifest));
+      sceneChanged = true;
+      if (entry.id === manifest.id) {
+        manifest = result.manifest;
+        states = new Map(manifest.states.map((state) => [state.id, state]));
+        eventDispatcher.eventMap = manifest.events || {};
+        stateManager.defaultState = manifest.defaultState;
+        if (!states.has(stateManager.baseState) && manifest.defaultState) stateManager.baseState = manifest.defaultState;
+        for (const override of stateManager.getSnapshot().overrides) {
+          if (!states.has(override.stateId)) stateManager.clearOverride(override.id, "asset_removed");
+        }
+        if (!states.has(stateManager.baseState) && manifest.defaultState) stateManager.setBaseState(manifest.defaultState, "asset_removed");
+        activeStateId = null;
+        if (manifest.defaultState) renderSnapshot(stateManager.getSnapshot("asset_sync"));
+        else {
+          elements.layers.forEach((layer) => layer.classList.remove("is-visible"));
+          elements.label.textContent = "没有可用图片";
+        }
+        renderEventControls(); renderActionEditor(); renderShortcuts();
+      }
+      if (result.missing.length) elements.status.textContent = `${entry.name} 有 ${result.missing.length} 个动作的图片缺失，已暂时隐藏。`;
+    } catch (error) { elements.status.textContent = `素材同步失败：${error.message}`; }
+  }
+  if (sceneChanged) {
+    if (document.body.classList.contains("live-mode")) {
+      if (lastLiveScene) renderSceneStage(lastLiveScene);
+    } else {
+      renderSceneEditor();
+      if (selectedInstanceId) selectSceneInstance(selectedInstanceId);
+      else renderControls();
+    }
+  }
+}
+
+async function pollAssetCatalog() {
+  try { await syncAssetCatalog(); } finally { setTimeout(pollAssetCatalog, 2500); }
 }
 
 function renderAssetQueue() {
@@ -1337,6 +1416,7 @@ async function start() {
     renderControls();
     renderActionEditor();
     await renderSnapshot(stateManager.getSnapshot("initial"));
+    pollAssetCatalog();
   } catch (error) {
     elements.label.textContent = "加载失败";
     elements.id.textContent = "error";
