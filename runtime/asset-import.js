@@ -23,6 +23,13 @@ function safePath(path) {
   return normalized.split("/").filter((part) => part && part !== ".");
 }
 
+export function classifyCharacterDesignPath(path) {
+  const parts = safePath(path);
+  if (parts.length < 2 || parts.length > 3 || parts.at(-2).toLowerCase() !== "character_design") return null;
+  if (!/\.(txt|md)$/i.test(parts.at(-1))) return null;
+  return { root: parts.length === 3 ? parts[0] : "", filename: parts.at(-1), path: parts.join("/") };
+}
+
 export function classifyAssetPath(path) {
   const parts = safePath(path);
   const section = parts.slice(0, -1).map((part) => SECTION_ALIASES.get(part.toLowerCase())).find(Boolean) || "Basic";

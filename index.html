@@ -76,14 +76,22 @@
         <section class="dock-panel" role="tabpanel" data-panel="package">
           <details class="asset-panel" open><summary>素材导入</summary>
             <label class="drop-zone" id="asset-drop-zone">拖入图片，或选择图片 / ZIP 包<input id="asset-files" type="file" accept="image/*,.zip,application/zip" multiple /></label>
-            <label class="drop-zone role-folder-zone">导入新角色文件夹（Basic / Emotion / Interact / Special）<input id="new-role-files" type="file" webkitdirectory directory multiple accept="image/*" /></label>
+            <label class="drop-zone role-folder-zone">导入新角色文件夹（可包含 character_design）<input id="new-role-files" type="file" webkitdirectory directory multiple /></label>
             <div class="asset-targets"><select id="asset-character" aria-label="素材目标角色"></select><select id="asset-section" aria-label="素材目标分区"></select></div>
-            <div id="asset-import-list" class="asset-import-list"></div><button id="commit-assets" class="secondary-button" type="button" disabled>确认导入</button>
+            <div id="asset-import-list" class="asset-import-list"></div><label id="asset-design-row" class="field-label" hidden>角色设定文件<select id="asset-design-select"></select></label><button id="commit-assets" class="secondary-button" type="button" disabled>确认导入</button>
             <p>导入内容先预览并确认角色与分区，再写入本地角色目录。</p>
           </details>
           <details id="action-editor" class="asset-panel nested-editor"><summary>编辑动作名称</summary><div id="action-editor-list" class="asset-import-list"></div></details>
         </section>
         <section class="dock-panel tests-layout" role="tabpanel" data-panel="tests">
+          <details class="event-panel"><summary>模拟直播控制</summary>
+            <p>仅接收模拟评论。选择真实 AI 会调用已配置模型并消耗额度。</p>
+            <label class="field-label">回复方式<select id="rehearsal-mode"><option value="mock">模拟回复（不调用 AI）</option><option value="ai">已配置 AI 模型</option></select></label>
+            <div class="event-controls"><button id="rehearsal-start" class="secondary-button" type="button">开启模拟</button><button id="rehearsal-stop" class="secondary-button" type="button">暂停并清空队列</button></div>
+            <label class="field-label">模拟观众评论<input id="rehearsal-comment" type="text" maxlength="200" placeholder="输入一条模拟评论" /></label>
+            <button id="rehearsal-send" class="secondary-button" type="button">发送模拟评论</button>
+            <p id="rehearsal-status" role="status">模拟自动回复尚未开启。</p>
+          </details>
           <section class="chat-panel"><div class="dock-section-heading"><h2>单轮对话</h2></div>
             <div class="model-picker"><select id="ai-provider" aria-label="AI 供应商"></select><select id="ai-model" aria-label="AI 模型"></select><button id="apply-model" class="secondary-button" type="button">应用模型</button></div>
             <small id="active-model">正在读取模型配置……</small><p id="chat-reply" class="chat-reply">输入一句话，她会回复并选择相应动作。</p>

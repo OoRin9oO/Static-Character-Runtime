@@ -8,13 +8,15 @@ import { CharacterStateManager } from "./runtime/state-manager.js";
 import { CharacterEventDispatcher } from "./runtime/event-dispatcher.js";
 import { ActionIntentController } from "./runtime/action-intent-controller.js";
 import { LiveEventInterface } from "./runtime/live-event-interface.js";
+import { LiveDirector } from "./runtime/live-director.js";
+import { buildLiveSnapshot, mergeChatBroadcast } from "./runtime/live-snapshot.js";
 import { reconcileAssets } from "./runtime/asset-catalog.js";
 import {
   SceneStore, createScene, createCharacterInstance, validateScene,
   DEFAULT_SCENE_LIMITS, HARD_SCENE_LIMITS, LIMIT_STORAGE_KEY,
 } from "./runtime/scene-manager.js";
 import {
-  buildCharacterManifest, defaultBehaviorForGroup, inferNewCharacterPackage, planAssetImport, SECTION_NAMES,
+  buildCharacterManifest, classifyCharacterDesignPath, defaultBehaviorForGroup, inferNewCharacterPackage, planAssetImport, SECTION_NAMES,
   validateArchiveTargets,
 } from "./runtime/asset-import.js";
 
@@ -94,18 +96,24 @@ let transitionSettings;
 let aiProviders = new Map();
 let activeAiConfig = null;
 let liveEventInterface;
+let liveDirector;
+let rehearsalTurn = 0;
 let sceneStore;
 let characterRegistry;
 let pendingAssets = [];
 let pendingCharacterManifest = null;
+let pendingDesignFiles = [];
+const designDrafts = new Map();
 let sceneRenderToken = 0;
 let selectedInstanceId = null;
 const sceneManifestCache = new Map();
 const assetScanState = new Map();
 let lastLiveScene = null;
+let liveSingleToken = 0;
 const sceneOverrides = new Map();
 let livePending = null;
 let liveSending = false;
+let liveSendPromise = null;
 let lastPublished = "";
 let liveRevision = -1;
 let lastObservedScene = "";
@@ -380,12 +388,12 @@ function clearSceneOverride(instanceId) {
   sceneOverrides.delete(instanceId);
 }
 
-function playSceneOverride(instance, state) {
+function playSceneOverride(instance, state, options = {}) {
   const behavior = { ...defaultBehaviorForGroup(state.group), ...state.behavior };
-  if (behavior.mode !== "override") return;
+  if (behavior.mode !== "override" && !options.force) return;
   clearSceneOverride(instance.instanceId);
   const active = { stateId: state.id, timer: null };
-  const durationMs = behavior.durationMs ?? 2500;
+  const durationMs = options.durationMs ?? behavior.durationMs ?? 2500;
   if (durationMs > 0) {
     active.timer = setTimeout(() => {
       if (sceneOverrides.get(instance.instanceId) !== active) return;
@@ -647,6 +655,27 @@ function renderSceneEditor() {
       if (state) playSceneOverride(instance, state);
     });
     controls.append(name, enabled, remove);
+    const modelLabel = document.createElement("label");
+    modelLabel.className = "field-label";
+    modelLabel.textContent = "角色模型";
+    const modelSelect = document.createElement("select");
+    modelSelect.setAttribute("aria-label", `${instance.displayName} 的模型`);
+    const defaultOption = document.createElement("option");
+    defaultOption.value = ""; defaultOption.textContent = "跟随全局模型"; modelSelect.append(defaultOption);
+    for (const provider of aiProviders.values()) {
+      for (const modelId of provider.models) {
+        const option = document.createElement("option");
+        option.value = `${provider.id}::${modelId}`; option.textContent = `${provider.name} / ${modelId}`;
+        modelSelect.append(option);
+      }
+    }
+    modelSelect.value = instance.model ? `${instance.model.provider}::${instance.model.modelId}` : "";
+    modelSelect.addEventListener("change", () => {
+      const [provider, modelId] = modelSelect.value.split("::");
+      instance.model = provider && modelId ? { provider, modelId } : null;
+      sceneStore.update(active);
+    });
+    modelLabel.append(modelSelect);
     const transform = document.createElement("div");
     transform.className = "transform-controls";
     for (const [key, label, min, max, step] of [["x", "X", 0, 1, .01], ["y", "Y", 0, 1, .01], ["scale", "缩放", .1, 3, .05]]) {
@@ -669,7 +698,7 @@ function renderSceneEditor() {
     front.addEventListener("click", () => { instance.transform.zIndex = Math.max(...active.characters.map((item) => item.transform.zIndex || 0)) + 1; sceneStore.update(active); renderSceneEditor(); });
     back.addEventListener("click", () => { instance.transform.zIndex = Math.min(...active.characters.map((item) => item.transform.zIndex || 0)) - 1; sceneStore.update(active); renderSceneEditor(); });
     move.append(left, right, up, down, front, back);
-    card.append(summary, controls, actionTools, transform, move);
+    card.append(summary, controls, modelLabel, createDesignEditor(instance.characterId), actionTools, transform, move);
     card.addEventListener("dragover", (event) => event.preventDefault());
     card.addEventListener("drop", (event) => {
       if (!event.dataTransfer?.files?.length) return;
@@ -680,6 +709,43 @@ function renderSceneEditor() {
   }
   renderSceneStage(active);
   updateSelectionDisplay();
+}
+
+function createDesignEditor(characterId) {
+  const section = document.createElement("details");
+  section.className = "character-design-editor";
+  const heading = document.createElement("summary"); heading.textContent = "角色设定";
+  const note = document.createElement("p"); note.textContent = "设定会随对话发送给所选模型服务；请勿填写密钥或不希望发送的私密信息。";
+  const input = document.createElement("textarea"); input.rows = 6; input.maxLength = 12000; input.placeholder = "填写角色身份、性格和说话方式……";
+  const message = document.createElement("p"); message.setAttribute("role", "status"); message.textContent = "展开后读取设定。";
+  const save = document.createElement("button"); save.type = "button"; save.className = "secondary-button"; save.textContent = "保存角色设定"; save.disabled = true;
+  input.addEventListener("input", () => { const draft = designDrafts.get(characterId); if (draft) draft.content = input.value; });
+  section.addEventListener("toggle", async () => {
+    if (!section.open) return;
+    try {
+      let draft = designDrafts.get(characterId);
+      if (!draft) {
+        const response = await fetch(`./api/characters/design/${encodeURIComponent(characterId)}`, { cache: "no-store" });
+        const data = await response.json(); if (!response.ok) throw new Error(data.error || "读取失败");
+        draft = { content: data.content, version: data.version, path: data.path }; designDrafts.set(characterId, draft);
+      }
+      if (!section.isConnected) return;
+      input.value = draft.content; message.textContent = `文件：${draft.path}`; save.disabled = false;
+    } catch (error) { message.textContent = `读取失败：${error.message}`; }
+  });
+  save.addEventListener("click", async () => {
+    const draft = designDrafts.get(characterId); if (!draft) return;
+    save.disabled = true;
+    try {
+      const response = await fetch(`./api/characters/design/${encodeURIComponent(characterId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: input.value, version: draft.version }) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.error || "保存失败");
+      designDrafts.set(characterId, { content: data.content, version: data.version, path: data.path });
+      message.textContent = `已保存：${data.path}`;
+    } catch (error) { message.textContent = `保存失败：${error.message}`; }
+    finally { save.disabled = false; }
+  });
+  section.append(heading, note, input, save, message);
+  return section;
 }
 
 function selectSceneInstance(instanceId) {
@@ -964,14 +1030,39 @@ function renderBroadcast(scene) {
 
 function publishLiveScene(scene) {
   if (!scene || document.body.classList.contains("live-mode")) return;
-  const snapshot = structuredClone(scene);
-  for (const instance of snapshot.characters) {
-    instance.currentState = sceneOverrides.get(instance.instanceId)?.stateId || instance.currentState || instance.initialState;
-  }
+  const single = stateManager && manifest ? { characterId: manifest.id, stateId: stateManager.getSnapshot().effectiveState } : null;
+  const snapshot = buildLiveSnapshot(scene, sceneOverrides, single);
   const body = JSON.stringify(snapshot);
   if (!liveSending && !livePending && body === lastPublished) return;
   livePending = body;
-  if (!liveSending) sendLiveScene();
+  if (!liveSending) liveSendPromise = sendLiveScene();
+}
+
+function updateChatBroadcast(sceneId, updates) {
+  const scene = sceneStore.scenes.find((item) => item.id === sceneId);
+  if (!scene) return;
+  mergeChatBroadcast(scene, updates);
+  sceneStore.update(scene);
+  if (sceneStore.active.id === sceneId) renderBroadcast(scene);
+}
+
+async function renderLiveSingle(scene) {
+  const token = ++liveSingleToken;
+  if (!scene.singleCharacter || scene.characters.some((item) => item.enabled)) return;
+  const entry = characterEntry(scene.singleCharacter.characterId);
+  if (!entry) return;
+  try {
+    const character = await loadSceneManifest(entry);
+    if (token !== liveSingleToken) return;
+    const changedCharacter = manifest.id !== character.id;
+    manifest = character;
+    manifestUrl = resolveRegisteredCharacterManifestUrl(entry, location.href);
+    states = new Map(character.states.map((state) => [state.id, state]));
+    stateManager.defaultState = character.defaultState;
+    if (changedCharacter) activeStateId = null;
+    const next = states.has(scene.singleCharacter.stateId) ? scene.singleCharacter.stateId : character.defaultState;
+    if (next) stateManager.setBaseState(next, "live_sync");
+  } catch (error) { elements.status.textContent = error.message; }
 }
 
 async function sendLiveScene() {
@@ -1002,6 +1093,7 @@ async function pollLiveScene() {
       lastLiveScene = data.scene;
       renderBroadcast(data.scene);
       renderSceneStage(data.scene);
+      renderLiveSingle(data.scene);
     }
   } catch { /* The next poll retries when the server returns. */ }
   setTimeout(pollLiveScene, 500);
@@ -1092,10 +1184,21 @@ function renderAssetQueue() {
     row.append(filename, section, label, remove); elements.assetImportList.append(row);
   }
   elements.commitAssets.disabled = pendingAssets.length === 0;
+  if (!pendingAssets.length) pendingDesignFiles = [];
+  const row = document.querySelector("#asset-design-row");
+  const select = document.querySelector("#asset-design-select");
+  row.hidden = pendingDesignFiles.length === 0;
+  const hadOptions = select.options.length > 0;
+  const previous = select.value;
+  select.replaceChildren();
+  const none = document.createElement("option"); none.value = ""; none.textContent = "不导入设定"; select.append(none);
+  pendingDesignFiles.forEach((file, index) => { const option = document.createElement("option"); option.value = String(index); option.textContent = file.archivePath; select.append(option); });
+  select.value = hadOptions && (previous === "" || Number(previous) < pendingDesignFiles.length) ? previous : (pendingDesignFiles.length ? "0" : "");
 }
 
 async function filesFromInput(files) {
   const result = [];
+  const designs = [];
   for (const file of files) {
     if (/\.zip$/i.test(file.name)) {
       if (!globalThis.JSZip) throw new Error("ZIP 解压组件未加载；请检查网络或直接拖入图片。 ");
@@ -1103,20 +1206,25 @@ async function filesFromInput(files) {
       for (const [path, entry] of Object.entries(zip.files)) {
         if (entry.dir) continue;
         const extension = path.slice(path.lastIndexOf(".")).toLowerCase();
-        if (!new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]).has(extension)) continue;
+        const originalPath = entry.unsafeOriginalName || path;
+        const design = classifyCharacterDesignPath(originalPath);
+        if (!design && !new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"]).has(extension)) continue;
         const blob = await entry.async("blob");
         const safeName = path.split(/[\\/]/).at(-1);
         const imageFile = new File([blob], safeName, { type: blob.type });
-        imageFile.archivePath = path;
-        result.push(imageFile);
+        imageFile.archivePath = originalPath;
+        if (design) designs.push(imageFile); else result.push(imageFile);
       }
+    } else if (file.webkitRelativePath && classifyCharacterDesignPath(file.webkitRelativePath)) {
+      file.archivePath = file.webkitRelativePath;
+      designs.push(file);
     } else if (/\.(png|jpe?g|webp|gif|avif)$/i.test(file.name)) {
       if (file.webkitRelativePath) file.archivePath = file.webkitRelativePath;
       result.push(file);
     }
   }
   if (result.length === 0) throw new Error("没有找到支持的图片；请选取 PNG、JPG、WebP、GIF 或 AVIF 图片。 ");
-  return result;
+  return { images: result, designs };
 }
 
 async function validateImportImages(files) {
@@ -1140,11 +1248,17 @@ async function validateImportImages(files) {
 
 async function handleAssetFiles(files, forcedCharacterId = "") {
   try {
-    const images = await filesFromInput(files);
+    const { images, designs } = await filesFromInput(files);
     await validateImportImages(images);
     const defaultSection = elements.assetSection.value || "Basic";
     const selectedCharacterId = forcedCharacterId || elements.assetCharacter.value;
     const newCharacter = forcedCharacterId ? null : inferNewCharacterPackage(images, characterRegistry.characters);
+    const imageRoots = new Set(images.map((file) => (file.archivePath || "").replace(/\\/g, "/").split("/")).filter((parts) => parts.length >= 3).map((parts) => parts[0].toLowerCase()));
+    for (const file of designs) {
+      const info = classifyCharacterDesignPath(file.archivePath);
+      if (info.root && !imageRoots.has(info.root.toLowerCase())) throw new Error(`角色设定“${file.archivePath}”与图片角色目录不一致。`);
+      if (file.size > 65536) throw new Error(`角色设定“${file.archivePath}”超过 64 KB。`);
+    }
     let planned;
     if (newCharacter) {
       if (characterRegistry.characters.some((character) => character.id.toLowerCase() === newCharacter.id.toLowerCase())) {
@@ -1163,6 +1277,7 @@ async function handleAssetFiles(files, forcedCharacterId = "") {
       pendingAssets.push(...planned);
       if (pendingCharacterManifest) refreshPendingCharacterManifest();
     }
+    pendingDesignFiles.push(...designs);
     renderAssetQueue();
   } catch (error) {
     elements.status.textContent = error.message;
@@ -1181,6 +1296,19 @@ async function commitAssetImport() {
     elements.commitAssets.disabled = true;
     try {
       const newCharacterId = pendingCharacterManifest?.id || "";
+      const selectedDesign = document.querySelector("#asset-design-select").value;
+      const designFile = selectedDesign === "" ? null : pendingDesignFiles[Number(selectedDesign)];
+      let designContent = null;
+      if (designFile) {
+        designContent = new TextDecoder("utf-8", { fatal: true }).decode(await designFile.arrayBuffer()).replace(/^\uFEFF/, "");
+        if (designContent.length > 12000) throw new Error("角色设定不能超过 12000 个字符。");
+        if (!newCharacterId) {
+          const check = await fetch(`./api/characters/design/${encodeURIComponent(pendingAssets[0].characterId)}`, { cache: "no-store" });
+          const existing = await check.json();
+          if (!check.ok) throw new Error(existing.error || "无法检查角色设定。");
+          if (existing.exists) throw new Error("目标角色已有设定。请选择“不导入设定”，或在角色卡中编辑现有设定。");
+        }
+      }
       if (pendingCharacterManifest) {
         const createResponse = await fetch("./api/characters/create", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -1199,6 +1327,12 @@ async function commitAssetImport() {
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || "素材保存失败。");
+      }
+      if (designFile) {
+        const characterId = newCharacterId || pendingAssets[0].characterId;
+        const response = await fetch(`./api/characters/design/${encodeURIComponent(characterId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: designContent, version: "" }) });
+        const saved = await response.json();
+        if (!response.ok) throw new Error(saved.error || "角色设定保存失败。");
       }
       await syncCharacterRegistry();
       if (newCharacterId) navigateToManifest(`./characters/${newCharacterId}/character.json`);
@@ -1271,23 +1405,35 @@ function bindChat() {
 
     elements.chatSend.disabled = true;
     elements.chatReply.textContent = "正在思考……";
-    eventDispatcher.dispatch({ type: "user_message_received", payload: { source: "chat" } });
-    eventDispatcher.dispatch({ type: "assistant_thinking", payload: { source: "chat" } });
-
     let cooldownMs = 0;
+    const sceneId = sceneStore.active.id;
+    let chatStarted = false;
+    let target = null;
     try {
-      const target = sceneStore.active.characters.find((item) => item.instanceId === selectedInstanceId);
+      target = sceneStore.active.characters.find((item) => item.instanceId === selectedInstanceId && item.enabled);
       if (sceneStore.active.characters.some((item) => item.enabled) && !target) {
         throw new Error("请先在画布中选择要对话的角色。");
       }
       const targetManifest = target ? await loadSceneManifest(characterEntry(target.characterId)) : manifest;
+      if (sceneStore.active.id !== sceneId) throw new Error("场景已切换，请重新发送。");
+      chatStarted = true;
+      updateChatBroadcast(sceneId, { current: message, speaker: target?.displayName || manifest.name, answer: "" });
+      if (target) {
+        clearSceneOverride(target.instanceId);
+        renderSceneStage(sceneStore.active);
+      } else {
+        stateManager.clearOverrides("chat_waiting");
+      }
+      // Publish the question and base pose before the server starts the AI request.
+      if (liveSendPromise) await liveSendPromise;
       const response = await fetch("./api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message,
-          provider: activeAiConfig.provider,
-          model: activeAiConfig.model,
+          characterId: target?.characterId || (characterEntry(manifest.id) ? manifest.id : ""),
+          provider: target?.model?.provider || activeAiConfig.provider,
+          model: target?.model?.modelId || activeAiConfig.model,
           states: targetManifest.states.map((state) => ({
             id: state.id,
             description: state.description || state.label,
@@ -1302,30 +1448,29 @@ function bindChat() {
         throw error;
       }
 
-      eventDispatcher.dispatch({ type: "assistant_response_finished", payload: { source: "chat" } });
       elements.chatReply.textContent = result.allowed
         ? result.reply
         : "抱歉，这个请求我不能协助。我们可以换一个安全、合适的话题。";
       if (target) {
-        const activeTarget = sceneStore.active.characters.find((item) => item.instanceId === target.instanceId);
+        const activeTarget = sceneStore.active.id === sceneId ? sceneStore.active.characters.find((item) => item.instanceId === target.instanceId) : null;
         const state = targetManifest.states.find((item) => item.id === result.intent?.state);
         if (activeTarget && state) {
-          const behavior = { ...defaultBehaviorForGroup(state.group), ...state.behavior };
-          if (behavior.mode === "override") playSceneOverride(activeTarget, state);
-          else updateSceneInstance(activeTarget, { currentState: state.id });
+          const duration = Number.isInteger(result.intent.durationMs) && result.intent.durationMs >= 250 && result.intent.durationMs <= 10000 ? result.intent.durationMs : 2500;
+          playSceneOverride(activeTarget, state, { force: true, durationMs: duration });
         }
       } else {
         actionIntentController.submit(result.intent);
       }
+      updateChatBroadcast(sceneId, { answer: elements.chatReply.textContent });
       elements.chatInput.value = "";
     } catch (error) {
-      eventDispatcher.dispatch({ type: "assistant_response_finished", payload: { source: "chat" } });
       if (error.status === 429) {
         cooldownMs = Math.max(1000, error.retryAfterMs || 10000);
         elements.chatReply.textContent = `请求过于频繁，请约 ${Math.ceil(cooldownMs / 1000)} 秒后重试。`;
       } else {
         elements.chatReply.textContent = error.message;
       }
+      if (chatStarted) updateChatBroadcast(sceneId, { answer: "暂时无法回复，请稍后再试。" });
     } finally {
       if (cooldownMs > 0) {
         setTimeout(() => {
@@ -1337,6 +1482,69 @@ function bindChat() {
         elements.chatInput.focus();
       }
     }
+  });
+}
+
+function bindRehearsal() {
+  const status = document.querySelector("#rehearsal-status");
+  const mode = document.querySelector("#rehearsal-mode");
+  const input = document.querySelector("#rehearsal-comment");
+  liveDirector = new LiveDirector({
+    onStatus: (message) => { status.textContent = message; },
+    reply: async (event, context) => {
+      while (elements.chatSend.disabled && context.isCurrent()) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      if (!context.isCurrent()) return;
+      elements.chatSend.disabled = true;
+      try {
+        const scene = sceneStore.active;
+        const sceneId = scene.id;
+        const cast = scene.characters.filter((item) => item.enabled);
+        if (!cast.length) throw new Error("请先向当前场景添加角色。");
+        const target = cast[rehearsalTurn % cast.length];
+        rehearsalTurn++;
+        const role = await loadSceneManifest(characterEntry(target.characterId));
+        if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
+        clearSceneOverride(target.instanceId);
+        updateChatBroadcast(sceneId, { current: event.text, speaker: target.displayName, answer: "" });
+        renderSceneStage(sceneStore.active);
+        if (liveSendPromise) await liveSendPromise;
+        if (!context.isCurrent()) return;
+        let result;
+        if (mode.value === "ai") {
+          if (!activeAiConfig) throw new Error("模型配置未就绪。");
+          const response = await fetch("./api/chat", {
+            method: "POST", signal: context.signal, headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: event.text, characterId: target.characterId, provider: target.model?.provider || activeAiConfig.provider, model: target.model?.modelId || activeAiConfig.model, states: role.states.map((state) => ({ id: state.id, description: state.description || state.label })) }),
+          });
+          result = await response.json();
+          if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+        } else {
+          const state = role.states.find((item) => item.id === "happy") || role.states.find((item) => item.id === role.defaultState);
+          result = { allowed: true, reply: "收到这条模拟评论啦。", intent: { state: state?.id, durationMs: 2500 } };
+        }
+        if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
+        const activeTarget = sceneStore.active.characters.find((item) => item.instanceId === target.instanceId && item.enabled);
+        if (!activeTarget) return;
+        const answer = result.allowed && typeof result.reply === "string" ? result.reply : "抱歉，这个请求我不能协助。";
+        const action = role.states.find((item) => item.id === result.intent?.state);
+        if (action) {
+          const duration = Number.isInteger(result.intent.durationMs) && result.intent.durationMs >= 250 && result.intent.durationMs <= 10000 ? result.intent.durationMs : 2500;
+          playSceneOverride(activeTarget, action, { force: true, durationMs: duration });
+        }
+        updateChatBroadcast(sceneId, { answer });
+        status.textContent = `${target.displayName} 已回复模拟评论。`;
+      } finally { elements.chatSend.disabled = false; }
+    },
+  });
+  document.querySelector("#rehearsal-start").addEventListener("click", () => liveDirector.start());
+  document.querySelector("#rehearsal-stop").addEventListener("click", () => liveDirector.pause());
+  document.querySelector("#rehearsal-send").addEventListener("click", () => {
+    const text = input.value.trim();
+    if (!text) { status.textContent = "请输入模拟评论。"; return; }
+    liveEventInterface.receive({ type: "chat_message", platform: "mock", user: { id: "mock-viewer", name: "模拟观众" }, text });
+    input.value = "";
   });
 }
 
@@ -1362,6 +1570,7 @@ async function start() {
         const message = nextRenderMessage;
         nextRenderMessage = "";
         renderSnapshot(snapshot, true, message);
+        if (sceneStore && !sceneStore.active.characters.some((item) => item.enabled)) publishLiveScene(sceneStore.active);
       },
       onError: (message) => { elements.status.textContent = message; },
     });
@@ -1372,7 +1581,8 @@ async function start() {
         const state = states.get(stateId);
         if (!state) return null;
         const action = { state: state.id, ...defaultBehaviorForGroup(state.group), ...state.behavior };
-        if (payload.source === "ai" && action.mode === "override") {
+        if (payload.source === "ai") {
+          action.mode = "override";
           action.durationMs = payload.durationMs;
         }
         return action;
@@ -1392,7 +1602,13 @@ async function start() {
       },
     });
     liveEventInterface = new LiveEventInterface({
-      onEvent: (event) => { elements.lastEvent.textContent = `${event.platform}:${event.type}`; },
+      onEvent: (event) => {
+        elements.lastEvent.textContent = `${event.platform}:${event.type}`;
+        if (event.platform === "mock" && liveDirector) {
+          const result = liveDirector.enqueue(event);
+          if (!result.ok) document.querySelector("#rehearsal-status").textContent = result.error;
+        }
+      },
       onError: (message) => { elements.status.textContent = message; },
     });
     window.staticCharacterRuntime = Object.freeze({
@@ -1412,6 +1628,8 @@ async function start() {
     if (isLiveMode) pollLiveScene();
     bindShortcutEditor();
     await loadModelOptions();
+    renderSceneEditor();
+    bindRehearsal();
     bindChat();
     renderControls();
     renderActionEditor();
