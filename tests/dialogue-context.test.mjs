@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import { DialogueContext } from "../runtime/dialogue-context.js";
+const context = new DialogueContext();
+for (let n = 0; n < 6; n++) context.add("scene-a", `role-${n}`, `answer-${n}`);
+const prompt = context.prompt("scene-a", "next-role", "question");
+assert.ok(prompt.includes("answer-5"));
+assert.ok(!prompt.includes("answer-2"));
+assert.ok(prompt.includes("next-role"));
+assert.ok(!context.prompt("scene-b", "other-role", "new-question").includes("answer-5"));
+for (let n = 0; n < 3; n++) context.add("scene-b", "x".repeat(200), "\u0000".repeat(500));
+assert.ok(context.prompt("scene-b", "speaker", "q".repeat(200)).length <= 2000);
+context.clear();
+assert.deepEqual(context.turns, []);
+console.log("dialogue-context: bounded history, scene isolation, request limit and clear passed");

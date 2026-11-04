@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {
-  buildCharacterManifest, defaultBehaviorForGroup, inferNewCharacterPackage, planAssetImport,
+  buildCharacterManifest, classifyCharacterDesignPath, defaultBehaviorForGroup, inferNewCharacterPackage, planAssetImport,
   validateArchiveTargets,
 } from "../runtime/asset-import.js";
 
@@ -8,6 +8,11 @@ const characters = [
   { id: "github-girl", name: "GitHub娘" },
   { id: "deepdeep", name: "DeepDeep" },
 ];
+assert.deepEqual(classifyCharacterDesignPath("DeepDeep/CHARACTER_DESIGN/角色设定.TXT"), { root: "DeepDeep", filename: "角色设定.TXT", path: "DeepDeep/CHARACTER_DESIGN/角色设定.TXT" });
+assert.deepEqual(classifyCharacterDesignPath("character_design/profile.md"), { root: "", filename: "profile.md", path: "character_design/profile.md" });
+assert.equal(classifyCharacterDesignPath("DeepDeep/Basic/notes.md"), null);
+assert.equal(classifyCharacterDesignPath("DeepDeep/character_design/角色.docx"), null);
+assert.throws(() => classifyCharacterDesignPath("../character_design/profile.md"), /不安全路径/);
 
 assert.doesNotThrow(() => validateArchiveTargets([
   { archivePath: "DeepDeep/Basic/idle.png" },

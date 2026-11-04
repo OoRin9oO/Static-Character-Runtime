@@ -1,3 +1,7 @@
+import { DialogueContext } from "./runtime/dialogue-context.js";
+import { SpeakerRouter } from "./runtime/speaker-router.js";
+import { createReplyMotion, replyFrame, playbackInterval, boundedCount, updateReplyPlayback } from "./runtime/reply-motion.js";
+import { discussionPlan } from "./runtime/discussion-plan.js";
 import {
   loadCharacterManifest,
   preloadImage,
@@ -97,7 +101,6 @@ let aiProviders = new Map();
 let activeAiConfig = null;
 let liveEventInterface;
 let liveDirector;
-let rehearsalTurn = 0;
 let sceneStore;
 let characterRegistry;
 let pendingAssets = [];
@@ -111,6 +114,9 @@ const assetScanState = new Map();
 let lastLiveScene = null;
 let liveSingleToken = 0;
 const sceneOverrides = new Map();
+const replyMotions = new Map();
+const speakingAnimations = new WeakMap();
+let motionSignature = "";
 let livePending = null;
 let liveSending = false;
 let liveSendPromise = null;
@@ -204,6 +210,11 @@ function bindTransitionEditor() {
       instance.transition = { ...transitionSettings };
       sceneStore.update(sceneStore.active);
       publishLiveScene(sceneStore.active);
+    } else if (sceneStore && manifest) {
+      sceneStore.active.characterTransitions ||= {};
+      sceneStore.active.characterTransitions[manifest.id] = { ...transitionSettings };
+      sceneStore.update(sceneStore.active);
+      publishLiveScene(sceneStore.active);
     }
   };
   elements.transitionType.addEventListener("change", () => {
@@ -218,7 +229,13 @@ function bindTransitionEditor() {
   elements.previewTransition.addEventListener("click", previewTransition);
   elements.resetTransition.addEventListener("click", async () => {
     const instance = sceneStore?.active.characters.find((item) => item.instanceId === selectedInstanceId);
-    if (!instance) { applyTransitionSettings(manifest.transition); return; }
+    if (!instance) {
+      if (sceneStore.active.characterTransitions) delete sceneStore.active.characterTransitions[manifest.id];
+      sceneStore.update(sceneStore.active);
+      applyTransitionSettings(manifest.transition);
+      publishLiveScene(sceneStore.active);
+      return;
+    }
     try {
       const character = await loadSceneManifest(characterEntry(instance.characterId));
       delete instance.transition;
@@ -230,6 +247,10 @@ function bindTransitionEditor() {
 }
 
 async function renderSnapshot(snapshot, allowFallback = true, fallbackMessage = "") {
+  const entry = replyMotions.get(`single:${manifest.id}`);
+  const sceneId = document.body.classList.contains("live-mode") ? lastLiveScene?.id : sceneStore?.active.id;
+  const motion = entry?.sceneId === sceneId ? replyFrame(entry.motion) : null;
+  if (motion && states.has(motion.state)) snapshot = { ...snapshot, effectiveState: motion.state };
   if (!states.size) {
     elements.layers.forEach((layer) => layer.classList.remove("is-visible"));
     elements.label.textContent = "没有可用图片";
@@ -249,6 +270,7 @@ async function renderSnapshot(snapshot, allowFallback = true, fallbackMessage = 
   }
 
   if (state.id === activeStateId) {
+    syncSpeakingAnimation(elements.layers[activeLayer], `single:${manifest.id}`);
     elements.status.textContent = fallbackMessage;
     setCurrentStateText(state, snapshot);
     return;
@@ -270,6 +292,7 @@ async function renderSnapshot(snapshot, allowFallback = true, fallbackMessage = 
     requestAnimationFrame(() => {
       next.classList.add("is-visible");
       if (next !== current) current.classList.remove("is-visible");
+      syncSpeakingAnimation(next, `single:${manifest.id}`);
     });
 
     activeLayer = nextLayer;
@@ -296,6 +319,7 @@ async function renderSnapshot(snapshot, allowFallback = true, fallbackMessage = 
 }
 
 function activateState(state) {
+  replyMotions.delete(`single:${manifest.id}`);
   const instance = sceneStore?.active.characters.find((item) => item.instanceId === selectedInstanceId);
   if (instance) {
     const behavior = { ...defaultBehaviorForGroup(state.group), ...state.behavior };
@@ -383,6 +407,7 @@ function updateSceneInstance(instance, updates) {
 }
 
 function clearSceneOverride(instanceId) {
+  replyMotions.delete(instanceId);
   const active = sceneOverrides.get(instanceId);
   if (active?.timer) clearTimeout(active.timer);
   sceneOverrides.delete(instanceId);
@@ -768,7 +793,7 @@ function updateSelectionDisplay() {
   for (const control of [elements.transitionType, elements.transitionDuration, elements.transitionDistance, elements.previewTransition, elements.resetTransition]) control.disabled = Boolean(needsSelection);
   if (!selected) {
     document.querySelector("#transition-target").textContent = needsSelection ? "请先选中场景中的角色。" : "设置对象：当前角色（页面预览）";
-    if (!needsSelection) applyTransitionSettings(manifest.transition);
+    if (!needsSelection) applyTransitionSettings(sceneStore?.active.characterTransitions?.[manifest.id] || manifest.transition);
   }
   document.body.classList.toggle("has-selected-instance", Boolean(selected));
   const summary = document.querySelector("#selection-summary");
@@ -792,8 +817,12 @@ function renderSceneStage(scene) {
     .sort((a, b) => a.transform.zIndex - b.transform.zIndex);
   const previous = new Map();
   stage.querySelectorAll(".scene-instance").forEach((node) => {
-    if (node.dataset.instanceId) previous.set(node.dataset.instanceId, { state: node.dataset.stateId, src: node.src });
-    node.remove();
+    if (node.dataset.instanceId && visibleInstances.some((item) => item.instanceId === node.dataset.instanceId)) {
+      previous.set(node.dataset.instanceId, { node, state: node.dataset.stateId, src: node.src });
+    } else {
+      speakingAnimations.get(node)?.animation.cancel();
+      node.remove();
+    }
   });
   if (visibleInstances.length === 0) {
     document.body.classList.remove("scene-editor-mode");
@@ -805,7 +834,9 @@ function renderSceneStage(scene) {
   for (const instance of visibleInstances) {
     const entry = characterEntry(instance.characterId);
     if (!entry) continue;
-    const stateId = sceneOverrides.get(instance.instanceId)?.stateId || instance.currentState || instance.initialState;
+    const motion = replyMotions.get(instance.instanceId);
+    const frame = motion?.sceneId === scene.id ? replyFrame(motion.motion) : null;
+    const stateId = frame?.state || sceneOverrides.get(instance.instanceId)?.stateId || instance.currentState || instance.initialState;
     const stateUrl = resolveRegisteredCharacterManifestUrl(entry, location.href);
     const image = document.createElement("img");
     image.className = "scene-instance";
@@ -821,22 +852,40 @@ function renderSceneStage(scene) {
     image.style.visibility = "visible";
     image.style.opacity = "1";
     image.title = instance.displayName;
-    stage.append(image);
+    // Keep the displayed image until its replacement is ready.
     if (!document.body.classList.contains("live-mode")) bindSceneImageDrag(image, instance, scene, stage);
     loadSceneManifest(entry).then((characterManifest) => {
       if (renderToken !== sceneRenderToken) return;
       const state = characterManifest.states.find((item) => item.id === stateId) || characterManifest.states.find((item) => item.id === characterManifest.defaultState);
       if (!state) return;
-      image.onerror = () => { elements.status.textContent = `实例 ${instance.displayName} 的图片无法加载：${state.image}`; };
       const prior = previous.get(instance.instanceId);
       const settings = { ...DEFAULT_TRANSITION, ...characterManifest.transition, ...instance.transition };
-      if (prior?.state && prior.state !== stateId) {
-        image.onload = () => {
-          if (renderToken !== sceneRenderToken) return;
-          animateSceneImage(image, settings, prior.src);
-        };
+      const url = new URL(state.image, new URL("./", stateUrl));
+      if (state.assetVersion) url.searchParams.set("v", state.assetVersion);
+      if (prior?.node.isConnected && prior.src === url.href && prior.state === stateId) {
+        // Dialogue/setting updates must not replace a node mid-animation.
+        prior.node.className = image.className;
+        prior.node.style.cssText = image.style.cssText;
+        prior.node.alt = image.alt;
+        prior.node.title = image.title;
+        syncSpeakingAnimation(prior.node, instance.instanceId);
+        return;
       }
-      image.src = new URL(state.image, new URL("./", stateUrl)).href + `?v=${Date.now()}`;
+      image.src = url.href;
+      const show = () => {
+        if (renderToken !== sceneRenderToken) return;
+        if (prior?.node.isConnected) {
+          speakingAnimations.get(prior.node)?.animation.cancel();
+          prior.node.replaceWith(image);
+        }
+        else stage.append(image);
+        if (prior?.state && prior.state !== stateId) animateSceneImage(image, settings, prior.src);
+        syncSpeakingAnimation(image, instance.instanceId);
+      };
+      // Decode off-screen: failed or stale requests must not blank the current pose.
+      return image.decode().then(show).catch(() => {
+        if (renderToken === sceneRenderToken) elements.status.textContent = `实例 ${instance.displayName} 的图片无法加载：${state.image}`;
+      });
     }).catch((error) => { if (renderToken === sceneRenderToken) elements.status.textContent = error.message; });
   }
 }
@@ -1030,8 +1079,9 @@ function renderBroadcast(scene) {
 
 function publishLiveScene(scene) {
   if (!scene || document.body.classList.contains("live-mode")) return;
-  const single = stateManager && manifest ? { characterId: manifest.id, stateId: stateManager.getSnapshot().effectiveState } : null;
+  const single = stateManager && manifest ? { characterId: manifest.id, stateId: stateManager.getSnapshot().effectiveState, transition: { ...transitionSettings } } : null;
   const snapshot = buildLiveSnapshot(scene, sceneOverrides, single);
+  snapshot.replyMotions = [...replyMotions].filter(([, item]) => item.sceneId === scene.id);
   const body = JSON.stringify(snapshot);
   if (!liveSending && !livePending && body === lastPublished) return;
   livePending = body;
@@ -1059,6 +1109,7 @@ async function renderLiveSingle(scene) {
     manifestUrl = resolveRegisteredCharacterManifestUrl(entry, location.href);
     states = new Map(character.states.map((state) => [state.id, state]));
     stateManager.defaultState = character.defaultState;
+    applyTransitionSettings(scene.singleCharacter.transition || character.transition);
     if (changedCharacter) activeStateId = null;
     const next = states.has(scene.singleCharacter.stateId) ? scene.singleCharacter.stateId : character.defaultState;
     if (next) stateManager.setBaseState(next, "live_sync");
@@ -1091,6 +1142,8 @@ async function pollLiveScene() {
       liveRevision = data.revision;
       lastObservedScene = JSON.stringify(data.scene);
       lastLiveScene = data.scene;
+      replyMotions.clear();
+      for (const [id, item] of data.scene.replyMotions || []) replyMotions.set(id, item);
       renderBroadcast(data.scene);
       renderSceneStage(data.scene);
       renderLiveSingle(data.scene);
@@ -1393,6 +1446,144 @@ async function loadModelOptions() {
   });
 }
 
+function syncSpeakingAnimation(image, id) {
+  const entry = replyMotions.get(id);
+  const sceneId = document.body.classList.contains("live-mode") ? lastLiveScene?.id : sceneStore?.active.id;
+  const frame = entry?.sceneId === sceneId ? replyFrame(entry.motion) : null;
+  const prior = speakingAnimations.get(image);
+  if (!frame?.bounce || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    prior?.animation.cancel();
+    speakingAnimations.delete(image);
+    return;
+  }
+  if (prior?.startedAt === entry.motion.startedAt) {
+    if (Math.abs(prior.animation.currentTime - frame.elapsed) > 120) prior.animation.currentTime = frame.elapsed;
+    return;
+  }
+  prior?.animation.cancel();
+  // Individual scale composes with the existing transition/position transform.
+  const animation = image.animate([{ scale: "1 1" }, { scale: "1.018 .982" }, { scale: "1 1" }], {
+    duration: 480, iterations: Infinity, easing: "ease-in-out",
+  });
+  animation.currentTime = frame.elapsed;
+  speakingAnimations.set(image, { animation, startedAt: entry.motion.startedAt });
+}
+
+function startReplyMotion(sceneId, target, role, result) {
+  const motion = createReplyMotion(result, role.states.map((state) => state.id), {
+    bounce: document.querySelector("#reply-bounce").checked,
+    sequence: document.querySelector("#reply-sequence").checked,
+    maxActions: document.querySelector("#reply-action-limit").value,
+    charactersPerSecond: document.querySelector("#reply-speed").value,
+  });
+  if (!motion || sceneStore.active.id !== sceneId) return;
+  const id = target?.instanceId || `single:${role.id}`;
+  motion.id = crypto.randomUUID();
+  replyMotions.set(id, { sceneId, motion });
+  renderSceneStage(sceneStore.active);
+  if (!target) renderSnapshot(stateManager.getSnapshot("reply_motion"));
+  window.dispatchEvent(new CustomEvent("scr:reply-ready", { detail: { id: motion.id, sceneId, instanceId: id, text: result.reply, estimatedDurationMs: motion.durationMs } }));
+  return motion.id;
+}
+
+function reportReplyPlayback(report) {
+  if (document.body.classList.contains("live-mode") || !report || typeof report.id !== "string") return false;
+  const entry = [...replyMotions.values()].find((item) => item.sceneId === sceneStore.active.id && item.motion.id === report.id);
+  if (!entry || !updateReplyPlayback(entry.motion, report)) return false;
+  publishLiveScene(sceneStore.active);
+  return true;
+}
+
+async function waitForReplyPlayback(id, context, sceneId) {
+  if (!id) return;
+  while (context.isCurrent() && sceneStore.active.id === sceneId) {
+    const entry = [...replyMotions.values()].find((item) => item.motion.id === id);
+    if (!entry || !replyFrame(entry.motion)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+function stopReplyMotions() {
+  const ids = [...replyMotions.values()].map((entry) => entry.motion.id);
+  replyMotions.clear();
+  window.dispatchEvent(new CustomEvent("scr:reply-stop", { detail: { ids } }));
+  if (sceneStore) {
+    renderSceneStage(sceneStore.active);
+    renderSnapshot(stateManager.getSnapshot("reply_motion_stop"));
+  }
+}
+
+function bindReplyPlayback() {
+  const fields = ["reply-bounce", "reply-sequence", "rehearsal-interval", "rehearsal-rounds", "reply-action-limit", "reply-speed"];
+  const normalize = (id, value) => id === "rehearsal-interval" ? playbackInterval(value) / 1000
+    : id === "reply-speed" ? Math.max(2, Math.min(12, Number(value) || 6)) : boundedCount(value);
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem("scr.reply-playback.v1") || "{}"); } catch { /* use defaults */ }
+  for (const id of fields) {
+    const input = document.getElementById(id);
+    if (input.type === "checkbox" && typeof saved[id] === "boolean") input.checked = saved[id];
+    if (input.type === "number" && saved[id] !== undefined) input.value = normalize(id, saved[id]);
+    input.addEventListener("change", () => {
+      const settings = Object.fromEntries(fields.map((key) => {
+        const element = document.getElementById(key);
+        if (element.type === "number") element.value = normalize(key, element.value);
+        return [key, element.type === "checkbox" ? element.checked : Number(element.value)];
+      }));
+      try { localStorage.setItem("scr.reply-playback.v1", JSON.stringify(settings)); } catch { /* session still usable */ }
+      if (liveDirector) liveDirector.intervalMs = playbackInterval(settings["rehearsal-interval"]);
+      if (id === "reply-bounce" && !input.checked) {
+        for (const entry of replyMotions.values()) entry.motion.bounce = false;
+        renderSceneStage(sceneStore.active);
+      }
+    });
+  }
+  document.querySelector("#reply-stop").addEventListener("click", stopReplyMotions);
+  setInterval(() => {
+    const scene = document.body.classList.contains("live-mode") ? lastLiveScene : sceneStore?.active;
+    if (!scene) return;
+    if (!document.body.classList.contains("live-mode")) {
+      for (const [id, entry] of replyMotions) {
+        if (entry.sceneId !== scene.id || !replyFrame(entry.motion)) replyMotions.delete(id);
+      }
+    }
+    document.querySelectorAll(".scene-instance[data-instance-id]").forEach((image) => syncSpeakingAnimation(image, image.dataset.instanceId));
+    if (manifest) elements.layers.forEach((image) => {
+      if (image.classList.contains("is-visible")) syncSpeakingAnimation(image, `single:${manifest.id}`);
+      else { speakingAnimations.get(image)?.animation.cancel(); speakingAnimations.delete(image); }
+    });
+    const signature = JSON.stringify([scene.id, [...replyMotions].map(([id, entry]) => {
+      const frame = entry.sceneId === scene.id ? replyFrame(entry.motion) : null;
+      return [id, frame?.state, frame?.bounce];
+    })]);
+    if (signature === motionSignature) return;
+    motionSignature = signature;
+    renderSceneStage(scene);
+    if (!scene.characters.some((item) => item.enabled)) renderSnapshot(stateManager.getSnapshot("reply_motion_tick"));
+  }, 100);
+}
+
+async function requestCharacterReply(payload, signal) {
+  const output = document.querySelector("#request-timing");
+  const started = performance.now();
+  output.textContent = "模型请求中……";
+  try {
+    const response = await fetch("./api/chat", {
+      method: "POST", signal, headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, includeActions: document.querySelector("#reply-sequence").checked, actionLimit: boundedCount(document.querySelector("#reply-action-limit").value, 3) }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      const error = new Error(result.error || `HTTP ${response.status}`);
+      error.status = response.status;
+      error.retryAfterMs = result.retryAfterMs || 0;
+      throw error;
+    }
+    return result;
+  } finally {
+    output.textContent = `最近请求耗时：${((performance.now() - started) / 1000).toFixed(2)} 秒（含网络、服务处理和完整回复；不含接话间隔）`;
+  }
+}
+
 function bindChat() {
   elements.chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1422,14 +1613,12 @@ function bindChat() {
         clearSceneOverride(target.instanceId);
         renderSceneStage(sceneStore.active);
       } else {
+        replyMotions.delete(`single:${manifest.id}`);
         stateManager.clearOverrides("chat_waiting");
       }
       // Publish the question and base pose before the server starts the AI request.
       if (liveSendPromise) await liveSendPromise;
-      const response = await fetch("./api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const result = await requestCharacterReply({
           message,
           characterId: target?.characterId || (characterEntry(manifest.id) ? manifest.id : ""),
           provider: target?.model?.provider || activeAiConfig.provider,
@@ -1438,28 +1627,16 @@ function bindChat() {
             id: state.id,
             description: state.description || state.label,
           })),
-        }),
       });
-      const result = await response.json();
-      if (!response.ok) {
-        const error = new Error(result.error || `AI 请求失败：HTTP ${response.status}`);
-        error.status = response.status;
-        error.retryAfterMs = result.retryAfterMs || 0;
-        throw error;
-      }
 
       elements.chatReply.textContent = result.allowed
         ? result.reply
         : "抱歉，这个请求我不能协助。我们可以换一个安全、合适的话题。";
       if (target) {
         const activeTarget = sceneStore.active.id === sceneId ? sceneStore.active.characters.find((item) => item.instanceId === target.instanceId) : null;
-        const state = targetManifest.states.find((item) => item.id === result.intent?.state);
-        if (activeTarget && state) {
-          const duration = Number.isInteger(result.intent.durationMs) && result.intent.durationMs >= 250 && result.intent.durationMs <= 10000 ? result.intent.durationMs : 2500;
-          playSceneOverride(activeTarget, state, { force: true, durationMs: duration });
-        }
+        if (activeTarget?.enabled) startReplyMotion(sceneId, activeTarget, targetManifest, result);
       } else {
-        actionIntentController.submit(result.intent);
+        startReplyMotion(sceneId, null, targetManifest, result);
       }
       updateChatBroadcast(sceneId, { answer: elements.chatReply.textContent });
       elements.chatInput.value = "";
@@ -1489,21 +1666,45 @@ function bindRehearsal() {
   const status = document.querySelector("#rehearsal-status");
   const mode = document.querySelector("#rehearsal-mode");
   const input = document.querySelector("#rehearsal-comment");
+  const dialogue = new DialogueContext();
+  const router = new SpeakerRouter();
+  const currentCast = () => sceneStore.active.characters.filter((item) => item.enabled).map((item) => ({
+    ...item, characterName: characterEntry(item.characterId)?.name || item.displayName,
+  }));
   liveDirector = new LiveDirector({
+    intervalMs: playbackInterval(document.querySelector("#rehearsal-interval").value),
     onStatus: (message) => { status.textContent = message; },
     reply: async (event, context) => {
       while (elements.chatSend.disabled && context.isCurrent()) {
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
       if (!context.isCurrent()) return;
+      if (event.metadata?.sceneId !== sceneStore.active.id) { status.textContent = "已跳过其他场景的待处理消息。"; return; }
       elements.chatSend.disabled = true;
       try {
         const scene = sceneStore.active;
         const sceneId = scene.id;
-        const cast = scene.characters.filter((item) => item.enabled);
+        const cast = currentCast();
         if (!cast.length) throw new Error("请先向当前场景添加角色。");
-        const target = cast[rehearsalTurn % cast.length];
-        rehearsalTurn++;
+        const count = Math.min(cast.length, boundedCount(event.metadata?.participants || document.querySelector("#rehearsal-turns").value), 3);
+        const useAi = mode.value === "ai";
+        const automatic = document.querySelector("#rehearsal-routing").value === "auto";
+        const discussion = event.metadata?.discussion === true;
+        const plan = discussionPlan({ discussion, rounds: event.metadata?.rounds, participants: count });
+        const spoken = new Set();
+        let previousReply = "";
+        let previousSpeakerId = null;
+        for (const { round, turn, rounds, closing } of plan) {
+        if (turn === 0) spoken.clear();
+        if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
+        const liveCast = currentCast();
+        const excluded = new Set(spoken);
+        if (turn === 0 && round > 0 && liveCast.length > 1) excluded.add(previousSpeakerId);
+        const choice = router.choose(sceneId, liveCast, { question: round === 0 ? event.text : "", previousReply, spoken: excluded, automatic, opening: round === 0 && turn === 0 });
+        if (!choice) continue;
+        const { target, reason } = choice;
+        spoken.add(target.instanceId);
+        status.textContent = `${target.displayName} 准备发言（第 ${round + 1}/${rounds} 轮，${turn + 1}/${count} 位，${reason}）。`;
         const role = await loadSceneManifest(characterEntry(target.characterId));
         if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
         clearSceneOverride(target.instanceId);
@@ -1512,40 +1713,61 @@ function bindRehearsal() {
         if (liveSendPromise) await liveSendPromise;
         if (!context.isCurrent()) return;
         let result;
-        if (mode.value === "ai") {
+        if (useAi) {
           if (!activeAiConfig) throw new Error("模型配置未就绪。");
-          const response = await fetch("./api/chat", {
-            method: "POST", signal: context.signal, headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: event.text, characterId: target.characterId, provider: target.model?.provider || activeAiConfig.provider, model: target.model?.modelId || activeAiConfig.model, states: role.states.map((state) => ({ id: state.id, description: state.description || state.label })) }),
-          });
-          result = await response.json();
-          if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+          result = await requestCharacterReply({ message: dialogue.prompt(sceneId, target.displayName, event.text, { cast: liveCast, target, discussion, turn, round, rounds, closing }), characterId: target.characterId, provider: target.model?.provider || activeAiConfig.provider, model: target.model?.modelId || activeAiConfig.model, states: role.states.map((state) => ({ id: state.id, description: state.description || state.label })) }, context.signal);
         } else {
           const state = role.states.find((item) => item.id === "happy") || role.states.find((item) => item.id === role.defaultState);
-          result = { allowed: true, reply: "收到这条模拟评论啦。", intent: { state: state?.id, durationMs: 2500 } };
+          const peer = liveCast.find((item) => !spoken.has(item.instanceId));
+          const previousName = dialogue.turns.at(-1)?.speaker;
+          const text = round === 0 && turn === 0 ? `我是${target.displayName}，收到${discussion ? "讨论主题" : "这条评论"}了。` : `第${round + 1}轮，我接着${previousName || "上一位角色"}的话补充一句。`;
+          result = { allowed: true, reply: text + (closing ? "本次模拟讨论到这里。" : peer ? `${peer.displayName}，你怎么看？` : "接下来继续聊。"), intent: { state: state?.id, durationMs: 2500 } };
+          result.actions = [state, role.states.find((item) => item.id === "talking"), state].filter(Boolean).map((item) => ({ state: item.id, durationMs: 1500 }));
+          document.querySelector("#request-timing").textContent = "当前为模拟回复，没有调用模型。";
         }
         if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
         const activeTarget = sceneStore.active.characters.find((item) => item.instanceId === target.instanceId && item.enabled);
         if (!activeTarget) return;
         const answer = result.allowed && typeof result.reply === "string" ? result.reply : "抱歉，这个请求我不能协助。";
-        const action = role.states.find((item) => item.id === result.intent?.state);
-        if (action) {
-          const duration = Number.isInteger(result.intent.durationMs) && result.intent.durationMs >= 250 && result.intent.durationMs <= 10000 ? result.intent.durationMs : 2500;
-          playSceneOverride(activeTarget, action, { force: true, durationMs: duration });
-        }
+        const replyId = startReplyMotion(sceneId, activeTarget, role, result);
         updateChatBroadcast(sceneId, { answer });
-        status.textContent = `${target.displayName} 已回复模拟评论。`;
+        dialogue.add(sceneId, target.displayName, answer, target.instanceId);
+        router.record(target.instanceId, { opening: round === 0 && turn === 0 });
+        previousReply = answer;
+        previousSpeakerId = target.instanceId;
+        status.textContent = `${target.displayName} 展示回复中（第 ${round + 1}/${rounds} 轮，${turn + 1}/${count} 位，${reason}）。`;
+        await waitForReplyPlayback(replyId, context, sceneId);
+        if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
+        if (!result.allowed) break;
+        if (!closing) {
+          await new Promise((resolve) => {
+            const done = () => { clearTimeout(timer); context.signal.removeEventListener("abort", done); resolve(); };
+            const timer = setTimeout(done, playbackInterval(document.querySelector("#rehearsal-interval").value));
+            context.signal.addEventListener("abort", done, { once: true });
+            if (context.signal.aborted) done();
+          });
+        }
+        }
+        if (context.isCurrent()) status.textContent = discussion ? "主题讨论已结束，等待下一条消息。" : "本条评论已回复，等待下一条消息。";
       } finally { elements.chatSend.disabled = false; }
     },
   });
   document.querySelector("#rehearsal-start").addEventListener("click", () => liveDirector.start());
-  document.querySelector("#rehearsal-stop").addEventListener("click", () => liveDirector.pause());
-  document.querySelector("#rehearsal-send").addEventListener("click", () => {
+  const pause = () => { liveDirector.pause(); dialogue.clear(); stopReplyMotions(); };
+  document.querySelector("#rehearsal-stop").addEventListener("click", pause);
+  elements.scenePicker.addEventListener("change", pause);
+  const send = (discussion = false) => {
+    if (!liveDirector.running) { status.textContent = "请先开启模拟。"; return; }
     const text = input.value.trim();
-    if (!text) { status.textContent = "请输入模拟评论。"; return; }
-    liveEventInterface.receive({ type: "chat_message", platform: "mock", user: { id: "mock-viewer", name: "模拟观众" }, text });
+    if (!text) { status.textContent = "请输入评论或讨论主题。"; return; }
+    if (discussion && (currentCast().length < 2 || Number(document.querySelector("#rehearsal-turns").value) < 2)) {
+      status.textContent = "主题讨论需要至少两位启用角色，并将参与人数设为 2 或 3。"; return;
+    }
+    liveEventInterface.receive({ type: "chat_message", platform: "mock", user: { id: discussion ? "topic-host" : "mock-viewer", name: discussion ? "主持人" : "模拟观众" }, text, metadata: { discussion, rounds: boundedCount(document.querySelector("#rehearsal-rounds").value), participants: boundedCount(document.querySelector("#rehearsal-turns").value) } });
     input.value = "";
-  });
+  };
+  document.querySelector("#rehearsal-send").addEventListener("click", () => send());
+  document.querySelector("#rehearsal-topic").addEventListener("click", () => send(true));
 }
 
 async function start() {
@@ -1605,7 +1827,7 @@ async function start() {
       onEvent: (event) => {
         elements.lastEvent.textContent = `${event.platform}:${event.type}`;
         if (event.platform === "mock" && liveDirector) {
-          const result = liveDirector.enqueue(event);
+          const result = liveDirector.enqueue({ ...event, metadata: { ...event.metadata, sceneId: sceneStore.active.id } });
           if (!result.ok) document.querySelector("#rehearsal-status").textContent = result.error;
         }
       },
@@ -1615,8 +1837,10 @@ async function start() {
       dispatch: (event) => eventDispatcher.dispatch(event),
       suggestAction: (intent) => actionIntentController.submit(intent),
       receiveLiveEvent: (event) => liveEventInterface.receive(event),
+      reportReplyPlayback,
     });
     elements.clearOverrides.addEventListener("click", () => {
+      stopReplyMotions();
       stateManager.clearOverrides("control_panel");
     });
     applyTransitionSettings(manifest.transition);
@@ -1629,6 +1853,7 @@ async function start() {
     bindShortcutEditor();
     await loadModelOptions();
     renderSceneEditor();
+    bindReplyPlayback();
     bindRehearsal();
     bindChat();
     renderControls();

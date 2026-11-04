@@ -8,8 +8,16 @@ characters/<character-id>/
 ├── Basic/
 ├── Emotion/
 ├── Interact/
-└── Special/
+├── Special/
+└── character_design/
+    └── profile.md
 ```
+
+`character_design` 为可选目录。角色卡可以编辑 `profile.md`；手动放入 UTF-8 编码的 `profile.txt` 也可读取。若二者同时存在，当前优先使用 `profile.md`。没有设定的旧角色包仍可正常导入和使用。
+
+导入角色 ZIP 或文件夹时，可以选择其中 `character_design/` 内的一个 UTF-8 TXT 或 Markdown 文件，确认后以 `profile.md` 保存。目标角色已有设定时不会自动覆盖，可选择不导入并在角色卡中编辑。Word DOC/DOCX 目前不能直接读取，请先转换为 UTF-8 文本。
+
+角色设定作为对话背景发送给所选模型服务，请不要放入密钥或不希望发送的数据；它不能替代安全规则。设定不是对话记忆。
 
 运行时不要求角色拥有固定动作。角色可以自行定义状态 ID、分组、名称和图片，只需满足清单格式。
 

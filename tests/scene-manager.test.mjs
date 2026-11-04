@@ -30,4 +30,14 @@ storage.setItem(SCENE_STORAGE_KEY, JSON.stringify([scene]));
 const recoveredStore = new (await import("../runtime/scene-manager.js")).SceneStore({ storage });
 assert.equal(recoveredStore.active.characters.length, 1);
 assert.equal(JSON.parse(storage.getItem(SCENE_STORAGE_KEY))[0].characters.length, 1);
+const storedScene = createScene("多角色");
+storedScene.characters.push(createCharacterInstance(character, storedScene, manifest, "model-a"));
+storedScene.characters.push(createCharacterInstance({ id: "other", name: "另一角色" }, storedScene, manifest, "model-b"));
+storedScene.characters[0].model = { provider: "first", modelId: "model-one" };
+storedScene.characters[1].model = { provider: "second", modelId: "model-two" };
+recoveredStore.add(storedScene);
+const reloaded = new (await import("../runtime/scene-manager.js")).SceneStore({ storage });
+assert.deepEqual(reloaded.active.characters.map((item) => item.model), [
+  { provider: "first", modelId: "model-one" }, { provider: "second", modelId: "model-two" },
+]);
 console.log("scene-manager: all tests passed");

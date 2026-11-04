@@ -87,10 +87,26 @@
           <details class="event-panel"><summary>模拟直播控制</summary>
             <p>仅接收模拟评论。选择真实 AI 会调用已配置模型并消耗额度。</p>
             <label class="field-label">回复方式<select id="rehearsal-mode"><option value="mock">模拟回复（不调用 AI）</option><option value="ai">已配置 AI 模型</option></select></label>
+            <label class="field-label">每条评论参与角色数<select id="rehearsal-turns"><option value="1">1 位（原有模式）</option><option value="2">2 位接话</option><option value="3">3 位接话</option></select></label>
+            <label class="field-label">主题讨论轮数<input id="rehearsal-rounds" type="number" min="1" max="6" step="1" value="1" /></label>
+            <label class="field-label">发言分配<select id="rehearsal-routing"><option value="auto">自动（点名优先，其余轮流）</option><option value="rotate">始终轮流</option></select></label>
+            <label class="field-label">接话／评论间隔（秒）<input id="rehearsal-interval" type="number" min="0" max="15" step="0.5" value="2" /></label>
+            <p>一轮指所选人数各发言一次，主题最多 6 轮；普通评论仍为一轮。展示结束后再等待接话间隔。携带最近 3 条回复，暂停后清空；AI 模式下每次发言调用一次模型。</p>
             <div class="event-controls"><button id="rehearsal-start" class="secondary-button" type="button">开启模拟</button><button id="rehearsal-stop" class="secondary-button" type="button">暂停并清空队列</button></div>
-            <label class="field-label">模拟观众评论<input id="rehearsal-comment" type="text" maxlength="200" placeholder="输入一条模拟评论" /></label>
+            <p>可用场景显示名或角色包名称点名，例如“@角色名 你怎么看？”；接话会参考同场角色名单和最近发言。</p>
+            <label class="field-label">模拟评论／讨论主题<input id="rehearsal-comment" type="text" maxlength="200" placeholder="输入评论或让角色讨论的话题" /></label>
             <button id="rehearsal-send" class="secondary-button" type="button">发送模拟评论</button>
+            <button id="rehearsal-topic" class="secondary-button" type="button">开始主题讨论</button>
             <p id="rehearsal-status" role="status">模拟自动回复尚未开启。</p>
+          </details>
+          <details class="event-panel"><summary>回复动效与耗时</summary>
+            <label><input id="reply-bounce" type="checkbox" checked /> 回复时轻微弹动</label>
+            <label><input id="reply-sequence" type="checkbox" checked /> 允许连续动作</label>
+            <label class="field-label">每次回复动作上限<input id="reply-action-limit" type="number" min="1" max="6" step="1" value="3" /></label>
+            <label class="field-label">展示语速（字／秒）<input id="reply-speed" type="number" min="2" max="12" step="1" value="6" /></label>
+            <p>根据回复长度估算展示时间（2.5–60 秒），动作按比例分配时间。当前未接 TTS；未来可由实际音频进度接管。动作结束后恢复基础姿态。</p>
+            <button id="reply-stop" type="button" class="secondary-button">停止当前动效</button>
+            <p id="request-timing" role="status">尚无请求耗时记录。</p>
           </details>
           <section class="chat-panel"><div class="dock-section-heading"><h2>单轮对话</h2></div>
             <div class="model-picker"><select id="ai-provider" aria-label="AI 供应商"></select><select id="ai-model" aria-label="AI 模型"></select><button id="apply-model" class="secondary-button" type="button">应用模型</button></div>
