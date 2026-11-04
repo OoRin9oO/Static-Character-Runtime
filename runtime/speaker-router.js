@@ -1,11 +1,11 @@
 const normalize = (value) => String(value || "").normalize("NFKC").toLocaleLowerCase().trim();
 const word = (value) => /[a-z0-9_]/i.test(value || "");
 
-export function mentionedSpeakers(text, cast) {
+export function mentionedSpeakers(text, cast, { explicitOnly = false } = {}) {
   const content = normalize(text);
   const aliases = new Map();
   for (const role of cast.filter((item) => item.enabled)) {
-    for (const name of new Set([normalize(role.displayName), normalize(role.characterName)])) {
+    for (const name of new Set([normalize(role.displayName), normalize(role.characterName), normalize(role.characterId)])) {
       if (!name) continue;
       if (!aliases.has(name)) aliases.set(name, new Set());
       aliases.get(name).add(role.instanceId);
@@ -16,6 +16,7 @@ export function mentionedSpeakers(text, cast) {
     if (ids.size !== 1) continue;
     for (let index = content.indexOf(name); index >= 0; index = content.indexOf(name, index + 1)) {
       const end = index + name.length;
+      if (explicitOnly && content[index - 1] !== "@") continue;
       if ((word(name[0]) && word(content[index - 1])) || (word(name.at(-1)) && word(content[end]))) continue;
       if (occupied.some(([a, b]) => index < b && end > a)) continue;
       occupied.push([index, end]);
@@ -32,6 +33,8 @@ export class SpeakerRouter {
     if (this.sceneId !== sceneId) { this.clear(); this.sceneId = sceneId; }
     const available = cast.filter((item) => item.enabled && !spoken.has(item.instanceId));
     if (!available.length) return null;
+    const explicit = mentionedSpeakers(question, cast, { explicitOnly: true }).map((id) => available.find((item) => item.instanceId === id)).find(Boolean);
+    if (explicit) return { target: explicit, reason: "明确 @ 点名" };
     if (automatic) {
       for (const [text, reason] of [[question, "观众点名"], [previousReply, "接续角色点名"]]) {
         const ids = mentionedSpeakers(text, cast);

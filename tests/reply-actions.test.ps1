@@ -35,4 +35,11 @@ $script:Decision.allowed = $false
 $Request.includeActions = $true
 $Result = Invoke-CharacterChat ($Request | ConvertTo-Json -Depth 8)
 if ($Result.Body.allowed -ne $false -or $Result.Body.ContainsKey('actions')) { throw 'Denied response returned an action sequence' }
+$script:Decision = @{ allowed = $true; reply = 'discussion'; state = 'discussion'; intensity = 0.5; durationMs = 2500 }
+$Route = @{ purpose = 'live_route'; message = 'Discuss together' }
+$Result = Invoke-CharacterChat ($Route | ConvertTo-Json)
+if ($Result.StatusCode -ne 200 -or $Result.Body.intent.state -ne 'discussion') { throw 'Routing mode failed' }
+$script:Decision.state = 'invented'
+$Result = Invoke-CharacterChat ($Route | ConvertTo-Json)
+if ($Result.StatusCode -ne 502) { throw 'Unvalidated routing mode accepted' }
 Write-Output 'reply-actions: server allowlist, durations, limits and legacy reply passed (mock only)'

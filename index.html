@@ -87,9 +87,11 @@
           <details class="event-panel"><summary>模拟直播控制</summary>
             <p>仅接收模拟评论。选择真实 AI 会调用已配置模型并消耗额度。</p>
             <label class="field-label">回复方式<select id="rehearsal-mode"><option value="mock">模拟回复（不调用 AI）</option><option value="ai">已配置 AI 模型</option></select></label>
+            <label class="field-label">评论处理<select id="rehearsal-message-mode"><option value="auto">自动识别</option><option value="solo">仅一位角色回复</option><option value="discussion">共同讨论</option></select></label>
+            <p>自动识别：模拟模式使用本地规则，AI 模式额外请求一次模型判断。判断失败会回退并显示来源；主题按钮始终发起讨论。</p>
             <label class="field-label">每条评论参与角色数<select id="rehearsal-turns"><option value="1">1 位（原有模式）</option><option value="2">2 位接话</option><option value="3">3 位接话</option></select></label>
             <label class="field-label">主题讨论轮数<input id="rehearsal-rounds" type="number" min="1" max="6" step="1" value="1" /></label>
-            <label class="field-label">发言分配<select id="rehearsal-routing"><option value="auto">自动（点名优先，其余轮流）</option><option value="rotate">始终轮流</option></select></label>
+            <label class="field-label">发言分配<select id="rehearsal-routing"><option value="auto">自动（点名优先，其余轮流）</option><option value="rotate">轮流（明确 @ 点名优先）</option></select></label>
             <label class="field-label">接话／评论间隔（秒）<input id="rehearsal-interval" type="number" min="0" max="15" step="0.5" value="2" /></label>
             <p>一轮指所选人数各发言一次，主题最多 6 轮；普通评论仍为一轮。展示结束后再等待接话间隔。携带最近 3 条回复，暂停后清空；AI 模式下每次发言调用一次模型。</p>
             <div class="event-controls"><button id="rehearsal-start" class="secondary-button" type="button">开启模拟</button><button id="rehearsal-stop" class="secondary-button" type="button">暂停并清空队列</button></div>
@@ -98,6 +100,16 @@
             <button id="rehearsal-send" class="secondary-button" type="button">发送模拟评论</button>
             <button id="rehearsal-topic" class="secondary-button" type="button">开始主题讨论</button>
             <p id="rehearsal-status" role="status">模拟自动回复尚未开启。</p>
+            <p id="rehearsal-decision" role="status">尚无分流结果。</p>
+          </details>
+          <details class="event-panel"><summary>剧本导入与播放</summary>
+            <p>支持 JSON 或 UTF-8 TXT／Markdown（每行“角色名：台词”）。只在浏览器读取，导入不会自动播放，也不会调用模型改写。</p>
+            <input id="script-file" type="file" accept=".json,.txt,.md" aria-label="选择剧本" />
+            <div id="script-mappings"></div>
+            <ol id="script-preview" style="max-height:240px;overflow:auto"></ol>
+            <button id="script-play" type="button" class="secondary-button" disabled>确认并从头播放</button>
+            <button id="script-stop" type="button" class="secondary-button">停止剧本</button>
+            <p id="script-status" role="status">请导入剧本并检查角色映射。当前为字幕与动作播放，尚无语音。</p>
           </details>
           <details class="event-panel"><summary>回复动效与耗时</summary>
             <label><input id="reply-bounce" type="checkbox" checked /> 回复时轻微弹动</label>

@@ -1,5 +1,7 @@
 import { DialogueContext } from "./runtime/dialogue-context.js";
 import { SpeakerRouter } from "./runtime/speaker-router.js";
+import { inferMessageMode } from "./runtime/message-routing.js";
+import { parseScript, matchScriptSpeaker, ScriptPlayer } from "./runtime/script-player.js";
 import { createReplyMotion, replyFrame, playbackInterval, boundedCount, updateReplyPlayback } from "./runtime/reply-motion.js";
 import { discussionPlan } from "./runtime/discussion-plan.js";
 import {
@@ -101,6 +103,8 @@ let aiProviders = new Map();
 let activeAiConfig = null;
 let liveEventInterface;
 let liveDirector;
+const scriptPlayer = new ScriptPlayer();
+let scriptPreparing = false;
 let sceneStore;
 let characterRegistry;
 let pendingAssets = [];
@@ -1686,10 +1690,32 @@ function bindRehearsal() {
         const sceneId = scene.id;
         const cast = currentCast();
         if (!cast.length) throw new Error("请先向当前场景添加角色。");
-        const count = Math.min(cast.length, boundedCount(event.metadata?.participants || document.querySelector("#rehearsal-turns").value), 3);
         const useAi = mode.value === "ai";
         const automatic = document.querySelector("#rehearsal-routing").value === "auto";
-        const discussion = event.metadata?.discussion === true;
+        const requestedMode = event.metadata?.discussion ? "discussion" : event.metadata?.messageMode || "auto";
+        let messageMode = requestedMode;
+        let source = "手动指定";
+        if (requestedMode === "auto") {
+          messageMode = inferMessageMode(event.text);
+          source = "本地规则";
+          if (useAi) {
+            try {
+              if (!activeAiConfig) throw new Error("模型尚未就绪");
+              const decision = await requestCharacterReply({ purpose: "live_route", message: event.text, provider: activeAiConfig.provider, model: activeAiConfig.model }, context.signal);
+              if (!decision.allowed || !["solo", "discussion"].includes(decision.intent?.state)) throw new Error("分流结果无效");
+              messageMode = decision.intent.state;
+              source = "AI 判断";
+            } catch (error) {
+              if (!context.isCurrent()) return;
+              source = `AI 分流失败，已回退本地规则（${error.message}）`;
+            }
+          }
+        }
+        if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
+        const discussion = messageMode === "discussion" && cast.length > 1;
+        const count = discussion ? Math.min(cast.length, Math.max(2, boundedCount(event.metadata?.participants || document.querySelector("#rehearsal-turns").value)), 3) : 1;
+        const decisionLabel = document.querySelector("#rehearsal-decision");
+        decisionLabel.textContent = `${discussion ? "共同讨论" : "个人回复"} · ${source}`;
         const plan = discussionPlan({ discussion, rounds: event.metadata?.rounds, participants: count });
         const spoken = new Set();
         let previousReply = "";
@@ -1703,6 +1729,7 @@ function bindRehearsal() {
         const choice = router.choose(sceneId, liveCast, { question: round === 0 ? event.text : "", previousReply, spoken: excluded, automatic, opening: round === 0 && turn === 0 });
         if (!choice) continue;
         const { target, reason } = choice;
+        if (round === 0 && turn === 0) decisionLabel.textContent += ` · 首位：${target.displayName}（${reason}）`;
         spoken.add(target.instanceId);
         status.textContent = `${target.displayName} 准备发言（第 ${round + 1}/${rounds} 轮，${turn + 1}/${count} 位，${reason}）。`;
         const role = await loadSceneManifest(characterEntry(target.characterId));
@@ -1752,7 +1779,10 @@ function bindRehearsal() {
       } finally { elements.chatSend.disabled = false; }
     },
   });
-  document.querySelector("#rehearsal-start").addEventListener("click", () => liveDirector.start());
+  document.querySelector("#rehearsal-start").addEventListener("click", () => {
+    if (scriptPlayer.running || scriptPreparing) { status.textContent = "请先停止剧本播放。"; return; }
+    liveDirector.start();
+  });
   const pause = () => { liveDirector.pause(); dialogue.clear(); stopReplyMotions(); };
   document.querySelector("#rehearsal-stop").addEventListener("click", pause);
   elements.scenePicker.addEventListener("change", pause);
@@ -1763,11 +1793,98 @@ function bindRehearsal() {
     if (discussion && (currentCast().length < 2 || Number(document.querySelector("#rehearsal-turns").value) < 2)) {
       status.textContent = "主题讨论需要至少两位启用角色，并将参与人数设为 2 或 3。"; return;
     }
-    liveEventInterface.receive({ type: "chat_message", platform: "mock", user: { id: discussion ? "topic-host" : "mock-viewer", name: discussion ? "主持人" : "模拟观众" }, text, metadata: { discussion, rounds: boundedCount(document.querySelector("#rehearsal-rounds").value), participants: boundedCount(document.querySelector("#rehearsal-turns").value) } });
+    liveEventInterface.receive({ type: "chat_message", platform: "mock", user: { id: discussion ? "topic-host" : "mock-viewer", name: discussion ? "主持人" : "模拟观众" }, text, metadata: { discussion, messageMode: document.querySelector("#rehearsal-message-mode").value, rounds: boundedCount(document.querySelector("#rehearsal-rounds").value), participants: boundedCount(document.querySelector("#rehearsal-turns").value) } });
     input.value = "";
   };
   document.querySelector("#rehearsal-send").addEventListener("click", () => send());
   document.querySelector("#rehearsal-topic").addEventListener("click", () => send(true));
+}
+
+function bindScriptPlayer() {
+  const fileInput = document.querySelector("#script-file");
+  const preview = document.querySelector("#script-preview");
+  const mappings = document.querySelector("#script-mappings");
+  const play = document.querySelector("#script-play");
+  const status = document.querySelector("#script-status");
+  let script = null, cancelled = false, ownsChat = false;
+  const cast = () => sceneStore.active.characters.filter((item) => item.enabled).map((item) => ({ ...item, characterName: characterEntry(item.characterId)?.name }));
+  const render = () => {
+    mappings.replaceChildren(); preview.replaceChildren();
+    if (!script) { play.disabled = true; return; }
+    const roles = cast();
+    for (const name of new Set(script.lines.map((line) => line.speaker))) {
+      const label = document.createElement("label"); label.className = "field-label"; label.textContent = `${name} → `;
+      const select = document.createElement("select"); select.dataset.speaker = name;
+      const empty = document.createElement("option"); empty.value = ""; empty.textContent = "请选择场景角色"; select.append(empty);
+      for (const role of roles) { const option = document.createElement("option"); option.value = role.instanceId; option.textContent = role.displayName; select.append(option); }
+      select.value = matchScriptSpeaker(name, roles);
+      label.append(select); mappings.append(label);
+    }
+    for (const line of script.lines) {
+      const item = document.createElement("li"); item.textContent = `${line.speaker}：${line.text}${line.state ? `（动作：${line.state}）` : ""}`; preview.append(item);
+    }
+    play.disabled = false;
+    status.textContent = `${script.title} · ${script.lines.length} 条。请检查角色映射与台词后确认播放。`;
+  };
+  fileInput.addEventListener("change", async () => {
+    script = null; render();
+    const file = fileInput.files[0]; if (!file) return;
+    try {
+      if (file.size > 400000) throw new Error("文件过大，请拆分剧本。");
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
+      script = parseScript(text, file.name); render();
+    } catch (error) { status.textContent = error.message; }
+  });
+  const stop = () => {
+    cancelled = true; scriptPlayer.stop();
+    if (ownsChat) stopReplyMotions();
+    status.textContent = "已请求停止；下一次播放从第一条开始。";
+  };
+  document.querySelector("#script-stop").addEventListener("click", stop);
+  elements.scenePicker.addEventListener("change", () => { stop(); render(); });
+  play.addEventListener("click", async () => {
+    if (!script || scriptPlayer.running || scriptPreparing) return;
+    const sceneId = sceneStore.active.id;
+    const selected = new Map([...mappings.querySelectorAll("select")].map((select) => [select.dataset.speaker, select.value]));
+    cancelled = false; scriptPreparing = true; play.disabled = true; fileInput.disabled = true;
+    liveDirector?.pause();
+    try {
+      status.textContent = "等待当前请求结束并校验剧本……";
+      while ((liveDirector?.busy || elements.chatSend.disabled) && !cancelled) await new Promise((resolve) => setTimeout(resolve, 100));
+      if (cancelled || sceneStore.active.id !== sceneId) return;
+      elements.chatSend.disabled = true; ownsChat = true;
+      const roles = cast();
+      const manifests = new Map();
+      const resolved = [];
+      for (const line of script.lines) {
+        const target = roles.find((role) => role.instanceId === selected.get(line.speaker));
+        if (!target) throw new Error(`请为“${line.speaker}”匹配启用的场景角色。`);
+        if (!manifests.has(target.characterId)) manifests.set(target.characterId, await loadSceneManifest(characterEntry(target.characterId)));
+        if (cancelled || sceneStore.active.id !== sceneId) return;
+        const role = manifests.get(target.characterId);
+        const state = role.states.find((state) => state.id === (line.state || role.defaultState));
+        if (!state) throw new Error(`${target.displayName} 不存在动作“${line.state || role.defaultState}”。`);
+        resolved.push({ ...line, target, role, state });
+      }
+      scriptPreparing = false;
+      const completed = await scriptPlayer.play(resolved, async (line, index, context) => {
+        if (!context.isCurrent() || sceneStore.active.id !== sceneId) { scriptPlayer.stop(); return; }
+        const target = sceneStore.active.characters.find((item) => item.instanceId === line.target.instanceId && item.enabled);
+        if (!target) throw new Error("剧本角色已被移除或停用，播放已停止。");
+        clearSceneOverride(target.instanceId);
+        const result = { allowed: true, reply: line.text, intent: { state: line.state.id, durationMs: 2500 } };
+        updateChatBroadcast(sceneId, { current: `剧本：${script.title}`, next: "", speaker: target.displayName, answer: line.text });
+        const id = startReplyMotion(sceneId, target, line.role, result);
+        status.textContent = `正在播放 ${index + 1}/${resolved.length}：${target.displayName}`;
+        await waitForReplyPlayback(id, context, sceneId);
+      });
+      status.textContent = completed === resolved.length ? "剧本播放完成。" : "剧本已停止；再次播放从第一条开始。";
+    } catch (error) { stopReplyMotions(); status.textContent = error.message; }
+    finally {
+      scriptPreparing = false; fileInput.disabled = false; play.disabled = !script;
+      if (ownsChat) { elements.chatSend.disabled = false; ownsChat = false; }
+    }
+  });
 }
 
 async function start() {
@@ -1855,6 +1972,7 @@ async function start() {
     renderSceneEditor();
     bindReplyPlayback();
     bindRehearsal();
+    bindScriptPlayer();
     bindChat();
     renderControls();
     renderActionEditor();

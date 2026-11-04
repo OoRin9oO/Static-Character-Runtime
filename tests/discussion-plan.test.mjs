@@ -5,6 +5,7 @@ import { discussionPlan } from "../runtime/discussion-plan.js";
 import { boundedCount, playbackInterval } from "../runtime/reply-motion.js";
 import { DialogueContext } from "../runtime/dialogue-context.js";
 import { SpeakerRouter } from "../runtime/speaker-router.js";
+import { inferMessageMode } from "../runtime/message-routing.js";
 
 assert.equal(discussionPlan({ discussion: true, rounds: 999, participants: 999 }).length, 18);
 assert.equal(discussionPlan({ discussion: false, rounds: 6, participants: 2 }).length, 2);
@@ -12,17 +13,25 @@ assert.equal(discussionPlan({ discussion: true, rounds: -1, participants: 2 }).l
 assert.equal(discussionPlan({ discussion: true, rounds: "invalid", participants: 2 }).length, 2);
 const source = await readFile(new URL("../app.js", import.meta.url), "utf8");
 const binding = source.slice(source.indexOf("function bindRehearsal()"), source.indexOf("async function start()"));
-async function run(stopAfter = Infinity) {
+async function run(stopAfter = Infinity, metadata = {}, text = "a 先聊聊", aiRoute = null) {
   const nodes = new Map();
   const node = (id) => {
-    if (!nodes.has(id)) nodes.set(id, { value: id === "#rehearsal-mode" ? "mock" : id === "#rehearsal-routing" ? "auto" : "0", addEventListener() {} });
+    if (!nodes.has(id)) nodes.set(id, { value: id === "#rehearsal-mode" ? (aiRoute ? "ai" : "mock") : id === "#rehearsal-routing" ? "auto" : "0", addEventListener() {} });
     return nodes.get(id);
   };
   const replies = [];
   let current = true;
   const scene = { id: "scene", characters: ["a", "b", "c"].map((id) => ({ instanceId: id, characterId: id, displayName: id, enabled: true })) };
   const sandbox = {
-    DialogueContext, SpeakerRouter, discussionPlan, boundedCount, playbackInterval, setTimeout, clearTimeout,
+    DialogueContext, SpeakerRouter, discussionPlan, boundedCount, playbackInterval, inferMessageMode, setTimeout, clearTimeout,
+    activeAiConfig: { provider: "mock", model: "mock" },
+    requestCharacterReply: async (payload) => {
+      if (payload.purpose === "live_route") {
+        if (aiRoute === "fail") throw new Error("mock failure");
+        return { allowed: true, intent: { state: aiRoute } };
+      }
+      return { allowed: true, reply: "mock answer", intent: { state: "idle", durationMs: 2500 } };
+    },
     document: { querySelector: node }, sceneStore: { active: scene }, liveDirector: null,
     LiveDirector: class { constructor(options) { this.options = options; } },
     elements: { chatSend: { disabled: false }, scenePicker: node("picker") },
@@ -33,7 +42,7 @@ async function run(stopAfter = Infinity) {
   };
   vm.createContext(sandbox);
   vm.runInContext(binding + "\nbindRehearsal();", sandbox);
-  await sandbox.liveDirector.options.reply({ text: "a 先聊聊", metadata: { sceneId: "scene", discussion: true, rounds: 99, participants: 3 } }, {
+  await sandbox.liveDirector.options.reply({ text, metadata: { sceneId: "scene", discussion: true, rounds: 99, participants: 3, ...metadata } }, {
     isCurrent: () => current, signal: new AbortController().signal,
   });
   assert.equal(sandbox.elements.chatSend.disabled, false);
@@ -44,4 +53,8 @@ assert.equal(replies.length, 18, "actual rehearsal stops at six rounds");
 for (let n = 0; n < 6; n++) assert.equal(new Set(replies.slice(n * 3, n * 3 + 3)).size, 3);
 for (let n = 1; n < 6; n++) assert.notEqual(replies[n * 3], replies[n * 3 - 1]);
 assert.equal((await run(4)).length, 4, "pause during playback prevents later replies");
+assert.equal((await run(Infinity, { discussion: false, messageMode: "auto", rounds: 1 }, "a 你好")).length, 1);
+assert.equal((await run(Infinity, { discussion: false, messageMode: "auto", rounds: 1 }, "大家讨论一下")).length, 3);
+assert.equal((await run(Infinity, { discussion: false, messageMode: "auto", rounds: 1 }, "大家讨论一下", "solo")).length, 1, "AI classification takes precedence over fallback rules");
+assert.equal((await run(Infinity, { discussion: false, messageMode: "auto", rounds: 1 }, "a 你好", "fail")).length, 1, "classifier failure falls back without breaking replies");
 console.log("discussion-plan: six-round cap, unique speakers, boundary handoff and pause integration passed");

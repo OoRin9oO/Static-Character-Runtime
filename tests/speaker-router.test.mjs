@@ -26,6 +26,10 @@ assert.equal(router.choose("scene", cast).target.instanceId, "b", "longest-waiti
 assert.equal(router.choose("other-scene", cast).target.instanceId, "a", "rotation must reset between scenes");
 assert.equal(router.choose("other-scene", cast, { question: "deepdeep", automatic: false }).target.instanceId, "a");
 assert.equal(router.choose("other-scene", []), null);
+const named = new SpeakerRouter({ random: () => 0 });
+assert.equal(named.choose("scene", cast, { question: "小明和GitHub娘，请讨论一下", opening: true }).target.instanceId, "c");
+assert.equal(named.choose("scene", cast, { question: "@deepdeep 先说", automatic: false, opening: true }).target.instanceId, "b");
+assert.equal(mentionedSpeakers("@github-girl，请回答", [{ ...cast[0], characterId: "github-girl" }])[0], "a");
 // Full rounds used to return to the first-added role at every new topic.
 const openers = new SpeakerRouter({ random: () => 0.99 });
 const first = [];
