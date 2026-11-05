@@ -489,7 +489,7 @@ function createAnchorEditor(instance, character, entry) {
   const reset = document.createElement("button"); reset.type = "button"; reset.textContent = "恢复共用锚点";
   const message = document.createElement("p"); message.setAttribute("role", "status");
   const effect = document.createElement("select"); effect.setAttribute("aria-label", "预览动效");
-  for (const [value, label] of [["left", "向左移动"], ["right", "向右移动"], ["up", "向上浮动"], ["zoom", "靠近镜头"]]) effect.add(new Option(label, value));
+  for (const [value, label] of [["left", "向左移动"], ["right", "向右移动"], ["up", "向上浮动"], ["zoom", "靠近镜头"], ["pounce", "扑向观众"]]) effect.add(new Option(label, value));
   const preview = document.createElement("button"); preview.type = "button"; preview.textContent = "预览动效";
   let draft;
   const showPoint = () => {
@@ -531,7 +531,7 @@ function createAnchorEditor(instance, character, entry) {
     const image = [...document.querySelectorAll(".scene-instance[data-instance-id]")].find((item) => item.dataset.instanceId === instance.instanceId);
     if (!image || !instance.enabled) { message.textContent = "请先显示场景中的角色。"; return; }
     const points = resolveAnchors(character, image.dataset.stateId);
-    visualEffects.set(instance.instanceId, { id: crypto.randomUUID(), sceneId: sceneStore.active.id, type: effect.value, anchor: points[pointPicker.value], startedAt: Date.now() + 600, durationMs: 3000 });
+    visualEffects.set(instance.instanceId, { id: crypto.randomUUID(), sceneId: sceneStore.active.id, type: effect.value, anchor: points[effect.value === "pounce" ? "head" : pointPicker.value], startedAt: Date.now() + 600, durationMs: 3000 });
     renderSceneStage(sceneStore.active);
     message.textContent = "正在预览动效，结束后恢复原位。";
   });
@@ -988,7 +988,7 @@ function syncVisualEffect(image, instanceId, sceneId) {
   const effect = visualEffects.get(instanceId);
   if (!effect || effect.sceneId !== sceneId) return;
   const elapsed = Date.now() - effect.startedAt;
-  if (elapsed >= effect.durationMs || !["left", "right", "up", "zoom"].includes(effect.type)) return;
+  if (elapsed >= effect.durationMs || !["left", "right", "up", "zoom", "pounce"].includes(effect.type)) return;
   const prior = visualAnimations.get(image);
   if (prior?.id === effect.id) return;
   prior?.animation.cancel();
@@ -997,7 +997,28 @@ function syncVisualEffect(image, instanceId, sceneId) {
   const x = Math.max(0, Math.min(100, Number(point.x) || 0));
   const y = Math.max(0, Math.min(100, Number(point.y) || 0));
   const delta = { left: "translateX(-20%)", right: "translateX(20%)", up: "translateY(-15%)", zoom: `translate(${(50 - x) * .5}%, ${(50 - y) * .5}%) scale(1.5)` }[effect.type];
-  const animation = image.animate([{ transform: base }, { transform: `${base} ${delta}`, offset: .5 }, { transform: base }], { duration: effect.durationMs, easing: "ease-in-out" });
+  let frames = [{ transform: base }, { transform: `${base} ${delta}`, offset: .5 }, { transform: base }];
+  if (effect.type === "pounce") {
+    const stage = image.closest(".stage").getBoundingClientRect();
+    const rect = image.getBoundingClientRect();
+    const ratio = image.naturalWidth / image.naturalHeight || 1;
+    const contentWidth = Math.min(rect.width, rect.height * ratio);
+    const contentHeight = Math.min(rect.height, rect.width / ratio);
+    const closeScale = 2.05;
+    const dx = stage.left + stage.width / 2 - (rect.left + rect.width / 2) - (x / 100 - .5) * contentWidth * closeScale;
+    const dy = stage.top + stage.height / 2 - (rect.top + rect.height / 2) - (y / 100 - .5) * contentHeight * closeScale;
+    const zoom = (factor) => `translate(${dx * factor / closeScale}px, ${dy * factor / closeScale}px) ${base} scale(${factor})`;
+    frames = [
+      { transform: base, offset: 0, easing: "ease-in" },
+      { transform: `${base} translateY(3%) scale(1.1, .8)`, offset: .18, easing: "cubic-bezier(.65, 0, 1, .5)" },
+      { transform: zoom(2.3), offset: .255, easing: "ease-out" },
+      { transform: zoom(1.98), offset: .34, easing: "ease-in-out" },
+      { transform: zoom(closeScale), offset: .41, easing: "linear" },
+      { transform: zoom(closeScale), offset: .68, easing: "ease-in-out" },
+      { transform: base, offset: 1 },
+    ];
+  }
+  const animation = image.animate(frames, { duration: effect.durationMs, easing: effect.type === "pounce" ? "linear" : "ease-in-out" });
   animation.currentTime = Math.max(0, elapsed);
   if (elapsed < 0) { animation.pause(); setTimeout(() => { if (visualAnimations.get(image)?.id === effect.id) animation.play(); }, -elapsed); }
   visualAnimations.set(image, { id: effect.id, animation });
