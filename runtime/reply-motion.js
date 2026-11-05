@@ -33,6 +33,8 @@ export function updateReplyPlayback(motion, report, now = Date.now()) {
 
 export function replyFrame(motion, now = Date.now()) {
   if (!motion || !Array.isArray(motion.steps) || !Number.isFinite(motion.startedAt)) return null;
+  // Keep the reply alive during synthesis, while the character stays in its base pose.
+  if (motion.pendingAudio) return { state: null, bounce: false, elapsed: 0 };
   const steps = motion.steps.slice(0, 6);
   if (steps.some((step) => !Number.isFinite(step.durationMs) || step.durationMs < 250 || step.durationMs > 5000)) return null;
   const total = steps.reduce((sum, step) => sum + step.durationMs, 0);

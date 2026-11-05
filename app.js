@@ -1483,11 +1483,26 @@ function startReplyMotion(sceneId, target, role, result) {
   if (!motion || sceneStore.active.id !== sceneId) return;
   const id = target?.instanceId || `single:${role.id}`;
   motion.id = crypto.randomUUID();
+  const speak = document.querySelector("#tts-enabled")?.checked && sceneStore.active.characters.filter((item) => item.enabled).length <= 1;
+  if (speak) motion.pendingAudio = true;
   replyMotions.set(id, { sceneId, motion });
   renderSceneStage(sceneStore.active);
   if (!target) renderSnapshot(stateManager.getSnapshot("reply_motion"));
-  window.dispatchEvent(new CustomEvent("scr:reply-ready", { detail: { id: motion.id, sceneId, instanceId: id, text: result.reply, estimatedDurationMs: motion.durationMs } }));
+  window.dispatchEvent(new CustomEvent("scr:reply-ready", { detail: { id: motion.id, sceneId, instanceId: id, text: result.reply, estimatedDurationMs: motion.durationMs, speak } }));
   return motion.id;
+}
+
+function setReplyAudioState(id, state) {
+  const entry = [...replyMotions.values()].find((item) => item.motion.id === id);
+  if (!entry) return;
+  entry.motion.pendingAudio = false;
+  if (state === "fallback") {
+    delete entry.motion.playback;
+    entry.motion.startedAt = Date.now();
+  } else if (state === "stop") {
+    entry.motion.playback = { positionMs: 0, durationMs: 1000, paused: true, ended: true, updatedAt: Date.now() };
+  }
+  renderSceneStage(sceneStore.active);
 }
 
 function reportReplyPlayback(report) {
@@ -1515,6 +1530,92 @@ function stopReplyMotions() {
     renderSceneStage(sceneStore.active);
     renderSnapshot(stateManager.getSnapshot("reply_motion_stop"));
   }
+}
+
+function bindTts() {
+  if (document.body.classList.contains("live-mode")) return;
+  const enabled = document.querySelector("#tts-enabled");
+  const voice = document.querySelector("#tts-voice");
+  const status = document.querySelector("#tts-status");
+  try {
+    enabled.checked = localStorage.getItem("scr.tts.enabled") === "true";
+    const saved = localStorage.getItem("scr.tts.voice");
+    if (saved) voice.value = saved;
+  } catch { /* use defaults */ }
+  enabled.addEventListener("change", () => {
+    try { localStorage.setItem("scr.tts.enabled", String(enabled.checked)); } catch { /* session only */ }
+    if (!enabled.checked) player.stop();
+  });
+  voice.addEventListener("change", () => {
+    try { localStorage.setItem("scr.tts.voice", voice.value); } catch { /* session only */ }
+  });
+  fetch("./api/tts/voices").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => {
+    const names = [...new Set(data.voices || [])].filter((name) => typeof name === "string");
+    voice.replaceChildren(...names.map((name) => new Option(name, name)));
+    const saved = localStorage.getItem("scr.tts.voice");
+    if (names.includes(saved)) voice.value = saved;
+    status.textContent = names.length ? "Breeze 已连接。" : "Breeze 没有可用语音。";
+  }).catch(() => { status.textContent = "Breeze 未启动。请运行其 start-server.bat，端口 8080。"; });
+
+  const player = {
+    active: null,
+    stop() {
+      const current = this.active;
+      if (!current) return;
+      this.active = null;
+      current.controller.abort();
+      clearInterval(current.timer);
+      if (current.audio) { current.audio.pause(); current.audio.removeAttribute("src"); }
+      if (current.url) URL.revokeObjectURL(current.url);
+      setReplyAudioState(current.id, "stop");
+    },
+    async speak(detail) {
+      this.stop();
+      if (!detail.speak || !enabled.checked) return;
+      const current = { id: detail.id, controller: new AbortController(), audio: null, url: null, timer: null };
+      this.active = current;
+      status.textContent = "正在合成语音，角色保持基础动作……";
+      try {
+        const response = await fetch("./api/tts/speech", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: detail.text, voice: voice.value }), signal: current.controller.signal,
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${response.status}`);
+        }
+        const blob = await response.blob();
+        if (this.active !== current) return;
+        current.url = URL.createObjectURL(blob);
+        const audio = new Audio(current.url);
+        current.audio = audio;
+        await new Promise((resolve, reject) => {
+          audio.onloadedmetadata = resolve;
+          audio.onerror = () => reject(new Error("浏览器无法解码 Breeze 音频。"));
+          audio.load();
+        });
+        if (this.active !== current) return;
+        const durationMs = Math.round(audio.duration * 1000);
+        if (!Number.isFinite(durationMs) || durationMs < 250 || durationMs > 120000) throw new Error("语音时长无效或超过 120 秒。");
+        const progress = (ended = false) => reportReplyPlayback({ id: current.id, positionMs: Math.min(durationMs, Math.round(audio.currentTime * 1000)), durationMs, paused: audio.paused, ended });
+        audio.onplaying = () => { setReplyAudioState(current.id, "play"); progress(); status.textContent = "正在播放 Breeze 语音。"; };
+        audio.ontimeupdate = () => progress();
+        audio.onended = () => { progress(true); status.textContent = "语音播放完成。"; this.stop(); };
+        current.timer = setInterval(() => { if (!progress()) this.stop(); }, 250);
+        await audio.play();
+      } catch (error) {
+        if (this.active !== current) return;
+        this.active = null;
+        clearInterval(current.timer);
+        if (current.audio) current.audio.pause();
+        if (current.url) URL.revokeObjectURL(current.url);
+        setReplyAudioState(current.id, "fallback");
+        status.textContent = `语音失败，已改用文字动效：${error.message}`;
+      }
+    },
+  };
+  window.addEventListener("scr:reply-ready", (event) => { if (event.detail.speak) player.speak(event.detail); else player.stop(); });
+  window.addEventListener("scr:reply-stop", () => player.stop());
 }
 
 function bindReplyPlayback() {
@@ -1612,6 +1713,7 @@ function bindChat() {
       const targetManifest = target ? await loadSceneManifest(characterEntry(target.characterId)) : manifest;
       if (sceneStore.active.id !== sceneId) throw new Error("场景已切换，请重新发送。");
       chatStarted = true;
+      stopReplyMotions();
       updateChatBroadcast(sceneId, { current: message, speaker: target?.displayName || manifest.name, answer: "" });
       if (target) {
         clearSceneOverride(target.instanceId);
@@ -1685,6 +1787,7 @@ function bindRehearsal() {
       if (!context.isCurrent()) return;
       if (event.metadata?.sceneId !== sceneStore.active.id) { status.textContent = "已跳过其他场景的待处理消息。"; return; }
       elements.chatSend.disabled = true;
+      let displayed = Promise.resolve();
       try {
         const scene = sceneStore.active;
         const sceneId = scene.id;
@@ -1734,10 +1837,12 @@ function bindRehearsal() {
         status.textContent = `${target.displayName} 准备发言（第 ${round + 1}/${rounds} 轮，${turn + 1}/${count} 位，${reason}）。`;
         const role = await loadSceneManifest(characterEntry(target.characterId));
         if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
-        clearSceneOverride(target.instanceId);
-        updateChatBroadcast(sceneId, { current: event.text, speaker: target.displayName, answer: "" });
-        renderSceneStage(sceneStore.active);
-        if (liveSendPromise) await liveSendPromise;
+        if (!previousSpeakerId) {
+          clearSceneOverride(target.instanceId);
+          updateChatBroadcast(sceneId, { current: event.text, speaker: target.displayName, answer: "" });
+          renderSceneStage(sceneStore.active);
+          if (liveSendPromise) await liveSendPromise;
+        }
         if (!context.isCurrent()) return;
         let result;
         if (useAi) {
@@ -1753,30 +1858,36 @@ function bindRehearsal() {
           document.querySelector("#request-timing").textContent = "当前为模拟回复，没有调用模型。";
         }
         if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
+        await displayed;
+        if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
         const activeTarget = sceneStore.active.characters.find((item) => item.instanceId === target.instanceId && item.enabled);
         if (!activeTarget) return;
         const answer = result.allowed && typeof result.reply === "string" ? result.reply : "抱歉，这个请求我不能协助。";
         const replyId = startReplyMotion(sceneId, activeTarget, role, result);
-        updateChatBroadcast(sceneId, { answer });
+        updateChatBroadcast(sceneId, { speaker: target.displayName, answer });
         dialogue.add(sceneId, target.displayName, answer, target.instanceId);
         router.record(target.instanceId, { opening: round === 0 && turn === 0 });
         previousReply = answer;
         previousSpeakerId = target.instanceId;
         status.textContent = `${target.displayName} 展示回复中（第 ${round + 1}/${rounds} 轮，${turn + 1}/${count} 位，${reason}）。`;
-        await waitForReplyPlayback(replyId, context, sceneId);
-        if (!context.isCurrent() || sceneStore.active.id !== sceneId) return;
-        if (!result.allowed) break;
-        if (!closing) {
+        displayed = (async () => {
+          await waitForReplyPlayback(replyId, context, sceneId);
+          if (!context.isCurrent() || sceneStore.active.id !== sceneId || closing || !result.allowed) return;
           await new Promise((resolve) => {
             const done = () => { clearTimeout(timer); context.signal.removeEventListener("abort", done); resolve(); };
             const timer = setTimeout(done, playbackInterval(document.querySelector("#rehearsal-interval").value));
             context.signal.addEventListener("abort", done, { once: true });
             if (context.signal.aborted) done();
           });
+        })();
+        if (!useAi || !result.allowed || closing) await displayed;
+        if (!result.allowed) break;
         }
-        }
+        await displayed;
         if (context.isCurrent()) status.textContent = discussion ? "主题讨论已结束，等待下一条消息。" : "本条评论已回复，等待下一条消息。";
-      } finally { elements.chatSend.disabled = false; }
+      } finally {
+        try { await displayed; } finally { elements.chatSend.disabled = false; }
+      }
     },
   });
   document.querySelector("#rehearsal-start").addEventListener("click", () => {
@@ -1971,6 +2082,7 @@ async function start() {
     await loadModelOptions();
     renderSceneEditor();
     bindReplyPlayback();
+    bindTts();
     bindRehearsal();
     bindScriptPlayer();
     bindChat();

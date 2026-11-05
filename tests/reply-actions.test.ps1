@@ -42,4 +42,12 @@ if ($Result.StatusCode -ne 200 -or $Result.Body.intent.state -ne 'discussion') {
 $script:Decision.state = 'invented'
 $Result = Invoke-CharacterChat ($Route | ConvertTo-Json)
 if ($Result.StatusCode -ne 502) { throw 'Unvalidated routing mode accepted' }
+$Result = Invoke-CharacterChat ($Request | ConvertTo-Json -Depth 8)
+if ($Result.StatusCode -ne 200 -or $Result.Body.intent.state -ne 'idle' -or $Result.Body.reply -ne 'discussion') { throw 'Valid reply lost on unknown action' }
+$script:Decision.reply = ''
+$Result = Invoke-CharacterChat ($Request | ConvertTo-Json -Depth 8)
+if ($Result.Body.code -ne 'empty_reply') { throw 'Missing reply diagnostic failed' }
+$script:Decision.reply = 'x' * 501
+$Result = Invoke-CharacterChat ($Request | ConvertTo-Json -Depth 8)
+if ($Result.Body.code -ne 'reply_too_long') { throw 'Length diagnostic failed' }
 Write-Output 'reply-actions: server allowlist, durations, limits and legacy reply passed (mock only)'

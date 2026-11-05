@@ -116,12 +116,15 @@
             <label><input id="reply-sequence" type="checkbox" checked /> 允许连续动作</label>
             <label class="field-label">每次回复动作上限<input id="reply-action-limit" type="number" min="1" max="6" step="1" value="3" /></label>
             <label class="field-label">展示语速（字／秒）<input id="reply-speed" type="number" min="2" max="12" step="1" value="6" /></label>
-            <p>根据回复长度估算展示时间（2.5–60 秒），动作按比例分配时间。当前未接 TTS；未来可由实际音频进度接管。动作结束后恢复基础姿态。</p>
+            <p>未启用语音时按字数估算；播放语音时按实际音频进度切换动作，结束后恢复基础姿态。</p>
             <button id="reply-stop" type="button" class="secondary-button">停止当前动效</button>
             <p id="request-timing" role="status">尚无请求耗时记录。</p>
           </details>
           <section class="chat-panel"><div class="dock-section-heading"><h2>单轮对话</h2></div>
             <div class="model-picker"><select id="ai-provider" aria-label="AI 供应商"></select><select id="ai-model" aria-label="AI 模型"></select><button id="apply-model" class="secondary-button" type="button">应用模型</button></div>
+            <label><input id="tts-enabled" type="checkbox" /> 播放 Breeze 语音（单角色）</label>
+            <label class="field-label">语音<select id="tts-voice" aria-label="Breeze 语音"><option value="Github-girl-1">Github-girl-1</option></select></label>
+            <small id="tts-status" role="status">请先启动 Breeze TTS 服务；语音仅在编辑器播放。</small>
             <small id="active-model">正在读取模型配置……</small><p id="chat-reply" class="chat-reply">输入一句话，她会回复并选择相应动作。</p>
             <form id="chat-form"><textarea id="chat-input" rows="2" maxlength="2000" placeholder="对角色说些什么……" required></textarea><button id="chat-send" type="submit">发送</button></form>
           </section>

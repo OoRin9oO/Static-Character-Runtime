@@ -56,6 +56,35 @@ function Send-Json {
     Send-Response $Stream $StatusCode $StatusText "application/json; charset=utf-8" ([Text.Encoding]::UTF8.GetBytes($Json))
 }
 
+function Invoke-BreezeSpeech {
+    param([string]$Text, [string]$Voice)
+    $Payload = @{ input = $Text; voice = $Voice; response_format = "wav" } | ConvertTo-Json -Compress
+    $Bytes = [Text.Encoding]::UTF8.GetBytes($Payload)
+    $Request = [Net.HttpWebRequest]::Create("http://127.0.0.1:8080/v1/audio/speech")
+    $Request.Proxy = $null
+    $Request.Method = "POST"
+    $Request.ContentType = "application/json; charset=utf-8"
+    $Request.ContentLength = $Bytes.Length
+    $Request.Timeout = 120000
+    $Request.ReadWriteTimeout = 120000
+    $Upload = $Request.GetRequestStream()
+    try { $Upload.Write($Bytes, 0, $Bytes.Length) } finally { $Upload.Dispose() }
+    $Response = $Request.GetResponse()
+    try {
+        if ($Response.ContentLength -gt 20MB) { throw "TTS audio exceeds 20 MB." }
+        $InputStream = $Response.GetResponseStream()
+        $Output = [IO.MemoryStream]::new()
+        try {
+            $Buffer = New-Object byte[] 65536
+            while (($Count = $InputStream.Read($Buffer, 0, $Buffer.Length)) -gt 0) {
+                if ($Output.Length + $Count -gt 20MB) { throw "TTS audio exceeds 20 MB." }
+                $Output.Write($Buffer, 0, $Count)
+            }
+            return ,$Output.ToArray()
+        } finally { $Output.Dispose(); $InputStream.Dispose() }
+    } finally { $Response.Dispose() }
+}
+
 function Get-CharacterDesign {
     param([string]$CharacterId)
     if ($CharacterId -notmatch '^[a-zA-Z0-9_-]{1,64}$') { throw "Invalid character id." }
@@ -299,8 +328,16 @@ Return exactly this JSON shape: {"allowed":true,"reply":"short routing reason in
     }
 
     $Reply = [string]$Decision.reply
-    if ([string]::IsNullOrWhiteSpace($Reply) -or $Reply.Length -gt 500 -or $StateIds -notcontains [string]$Decision.state) {
-        return @{ StatusCode = 502; StatusText = "Bad Gateway"; Body = @{ error = "The AI response failed local validation." } }
+    if ($Decision.reply -isnot [string] -or [string]::IsNullOrWhiteSpace($Reply)) {
+        return @{ StatusCode = 502; StatusText = "Bad Gateway"; Body = @{ error = "模型没有返回有效的回复文本。"; code = "empty_reply" } }
+    }
+    if ($Reply.Length -gt 500) {
+        return @{ StatusCode = 502; StatusText = "Bad Gateway"; Body = @{ error = "模型回复超过 500 字符限制。"; code = "reply_too_long" } }
+    }
+    $StateId = ([string]$Decision.state).Trim()
+    if ($StateIds -cnotcontains $StateId) {
+        if ($IsRouting) { return @{ StatusCode = 502; StatusText = "Bad Gateway"; Body = @{ error = "模型没有返回有效的个人或讨论分类。"; code = "invalid_route" } } }
+        $StateId = if ($StateIds -ccontains "idle") { "idle" } else { $StateIds[0] }
     }
     $Intensity = 0.0
     $DurationMs = 0
@@ -322,7 +359,7 @@ Return exactly this JSON shape: {"allowed":true,"reply":"short routing reason in
     return @{ StatusCode = 200; StatusText = "OK"; Body = @{
         allowed = $true
         reply = $Reply.Trim()
-        intent = @{ state = [string]$Decision.state; intensity = $Intensity; durationMs = $DurationMs }
+        intent = @{ state = $StateId; intensity = $Intensity; durationMs = $DurationMs }
         actions = $ReplyActions
     } }
 }
@@ -495,6 +532,35 @@ try {
             if ($Request.Method -eq "POST" -and $RequestPath -eq "/api/chat") {
                 $Result = Invoke-CharacterChat $Request.Body
                 Send-Json $Stream $Result.StatusCode $Result.StatusText $Result.Body
+                continue
+            }
+            if ($Request.Method -eq "GET" -and $RequestPath -eq "/api/tts/voices") {
+                try {
+                    $VoiceRequest = [Net.HttpWebRequest]::Create("http://127.0.0.1:8080/v1/voices")
+                    $VoiceRequest.Proxy = $null
+                    $VoiceRequest.Timeout = 3000
+                    $VoiceResponse = $VoiceRequest.GetResponse()
+                    try {
+                        $Reader = [IO.StreamReader]::new($VoiceResponse.GetResponseStream(), [Text.Encoding]::UTF8)
+                        try { $Voices = $Reader.ReadToEnd() | ConvertFrom-Json } finally { $Reader.Dispose() }
+                    } finally { $VoiceResponse.Dispose() }
+                    Send-Json $Stream 200 "OK" @{ voices = @($Voices | ForEach-Object { [string]$_.id } | Where-Object { $_ -match '^[\w-]{1,80}$' }) }
+                } catch { Send-Json $Stream 503 "Service Unavailable" @{ error = "Breeze TTS is not running on 127.0.0.1:8080." } }
+                continue
+            }
+            if ($Request.Method -eq "POST" -and $RequestPath -eq "/api/tts/speech") {
+                try {
+                    if ($Request.ContentType -notmatch '^application/json') { throw "Content-Type must be application/json." }
+                    $Speech = $Request.Body | ConvertFrom-Json
+                    $SpeechText = ([string]$Speech.text).Trim()
+                    $VoiceId = ([string]$Speech.voice).Trim()
+                    if (-not $SpeechText -or $SpeechText.Length -gt 500 -or $VoiceId -notmatch '^[\w-]{1,80}$') { throw "Invalid TTS text or voice." }
+                    $Audio = Invoke-BreezeSpeech $SpeechText $VoiceId
+                    if ($Audio.Length -lt 44 -or [Text.Encoding]::ASCII.GetString($Audio, 0, 4) -ne "RIFF") { throw "Breeze returned invalid WAV audio." }
+                    Send-Response $Stream 200 "OK" "audio/wav" $Audio
+                } catch [Net.WebException] {
+                    Send-Json $Stream 503 "Service Unavailable" @{ error = "Breeze TTS is unavailable or rejected the voice. Check its server and voice selection." }
+                } catch { Send-Json $Stream 400 "Bad Request" @{ error = $_.Exception.Message } }
                 continue
             }
             if ($Request.Method -eq "GET" -and $RequestPath -eq "/api/models") {
