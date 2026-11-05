@@ -194,6 +194,10 @@ h1 { margin: 0; font-size: clamp(1.7rem, 4vw, 2.5rem); }
 .character-design-editor summary { cursor: pointer; }
 .character-design-editor p { color: #aeb2c3; font-size: .72rem; line-height: 1.5; }
 .character-design-editor textarea { width: 100%; min-height: 120px; resize: vertical; padding: 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: #191b26; color: #f6f7fb; font: inherit; }
+.anchor-editor select { max-width: 100%; margin: 4px; }
+.anchor-picture { position: relative; width: fit-content; max-width: 100%; margin: 8px auto; cursor: crosshair; line-height: 0; }
+.anchor-picture img { display: block; max-width: 100%; max-height: 260px; width: auto; height: auto; }
+.anchor-dot { position: absolute; width: 12px; height: 12px; border: 2px solid white; border-radius: 50%; background: #a953ea; transform: translate(-50%, -50%); pointer-events: none; }
 #asset-design-row[hidden] { display: none; }
 .instance-controls, .transform-controls, .instance-move { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 .instance-controls input[type="text"], .instance-controls input:not([type]), .instance-controls select {

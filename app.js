@@ -119,6 +119,8 @@ let lastLiveScene = null;
 let liveSingleToken = 0;
 const sceneOverrides = new Map();
 const replyMotions = new Map();
+const visualEffects = new Map();
+const visualAnimations = new WeakMap();
 const speakingAnimations = new WeakMap();
 let motionSignature = "";
 let livePending = null;
@@ -452,6 +454,91 @@ async function loadSceneManifest(entry) {
   return sceneManifestCache.get(key);
 }
 
+const DEFAULT_ANCHORS = { head: { x: 50, y: 20 }, body: { x: 50, y: 50 }, feet: { x: 50, y: 90 } };
+function resolveAnchors(character, stateId) {
+  const state = character.states.find((item) => item.id === stateId);
+  const result = {};
+  for (const key of ["head", "body", "feet"]) {
+    const point = state?.anchors?.[key] || character.anchors?.[key] || DEFAULT_ANCHORS[key];
+    result[key] = { x: Number(point.x), y: Number(point.y) };
+  }
+  return result;
+}
+
+function createAnchorEditor(instance, character, entry) {
+  const section = document.createElement("details"); section.className = "character-design-editor anchor-editor";
+  const title = document.createElement("summary"); title.textContent = "动效锚点设置";
+  const note = document.createElement("p"); note.textContent = "选择共用锚点或指定姿态，选中锚点后点击图片定位；坐标为图片百分比。";
+  const scope = document.createElement("select"); scope.setAttribute("aria-label", "锚点设置范围");
+  scope.add(new Option("角色共用", ""));
+  for (const state of character.states) scope.add(new Option(`姿态：${state.label}`, state.id));
+  const pointPicker = document.createElement("select"); pointPicker.setAttribute("aria-label", "选择锚点");
+  for (const [key, label] of [["head", "头部"], ["body", "身体"], ["feet", "脚部"]]) pointPicker.add(new Option(label, key));
+  const picture = document.createElement("div"); picture.className = "anchor-picture";
+  const img = document.createElement("img"); img.alt = "点击图片设置锚点";
+  const dot = document.createElement("span"); dot.className = "anchor-dot";
+  picture.append(img, dot);
+  const values = document.createElement("div"); values.className = "transform-controls";
+  const inputs = {};
+  for (const axis of ["x", "y"]) {
+    const label = document.createElement("label"); label.textContent = `${axis.toUpperCase()}（%）`;
+    const input = document.createElement("input"); input.type = "number"; input.min = "0"; input.max = "100"; input.step = "0.1";
+    label.append(input); values.append(label); inputs[axis] = input;
+  }
+  const save = document.createElement("button"); save.type = "button"; save.textContent = "保存锚点";
+  const reset = document.createElement("button"); reset.type = "button"; reset.textContent = "恢复共用锚点";
+  const message = document.createElement("p"); message.setAttribute("role", "status");
+  const effect = document.createElement("select"); effect.setAttribute("aria-label", "预览动效");
+  for (const [value, label] of [["left", "向左移动"], ["right", "向右移动"], ["up", "向上浮动"], ["zoom", "靠近镜头"]]) effect.add(new Option(label, value));
+  const preview = document.createElement("button"); preview.type = "button"; preview.textContent = "预览动效";
+  let draft;
+  const showPoint = () => {
+    const point = draft[pointPicker.value]; inputs.x.value = point.x; inputs.y.value = point.y;
+    dot.style.left = `${point.x}%`; dot.style.top = `${point.y}%`;
+  };
+  const reload = () => {
+    draft = resolveAnchors(character, scope.value);
+    const state = character.states.find((item) => item.id === scope.value) || character.states.find((item) => item.id === (instance.currentState || instance.initialState)) || character.states[0];
+    img.src = resolveStateImageUrl(state, resolveRegisteredCharacterManifestUrl(entry, location.href));
+    reset.textContent = scope.value ? "恢复共用锚点" : "恢复默认锚点";
+    message.textContent = scope.value && state.anchors ? "此姿态使用单独设置。" : "当前使用共用或默认值。";
+    showPoint();
+  };
+  scope.addEventListener("change", reload); pointPicker.addEventListener("change", showPoint);
+  for (const axis of ["x", "y"]) inputs[axis].addEventListener("change", () => {
+    const value = Number(inputs[axis].value);
+    if (inputs[axis].value === "" || !Number.isFinite(value) || value < 0 || value > 100) { message.textContent = "坐标需在 0 到 100 之间。"; showPoint(); return; }
+    draft[pointPicker.value][axis] = value; showPoint();
+  });
+  picture.addEventListener("click", (event) => {
+    const rect = img.getBoundingClientRect(); if (!rect.width || !rect.height) return;
+    draft[pointPicker.value] = { x: Math.max(0, Math.min(100, +((event.clientX - rect.left) / rect.width * 100).toFixed(1))), y: Math.max(0, Math.min(100, +((event.clientY - rect.top) / rect.height * 100).toFixed(1))) };
+    showPoint();
+  });
+  const write = async (resetValue) => {
+    save.disabled = reset.disabled = scope.disabled = true;
+    try {
+      const response = await fetch("./api/characters/anchors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ characterId: instance.characterId, stateId: scope.value, anchors: draft, reset: resetValue }) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.error || "保存失败");
+      const target = scope.value ? character.states.find((state) => state.id === scope.value) : character;
+      if (resetValue) delete target.anchors; else target.anchors = structuredClone(draft);
+      reload(); message.textContent = "锚点已保存。";
+    } catch (error) { message.textContent = `保存失败：${error.message}`; }
+    finally { save.disabled = reset.disabled = scope.disabled = false; }
+  };
+  save.addEventListener("click", () => write(false)); reset.addEventListener("click", () => write(true));
+  preview.addEventListener("click", () => {
+    const image = [...document.querySelectorAll(".scene-instance[data-instance-id]")].find((item) => item.dataset.instanceId === instance.instanceId);
+    if (!image || !instance.enabled) { message.textContent = "请先显示场景中的角色。"; return; }
+    const points = resolveAnchors(character, image.dataset.stateId);
+    visualEffects.set(instance.instanceId, { id: crypto.randomUUID(), sceneId: sceneStore.active.id, type: effect.value, anchor: points[pointPicker.value], startedAt: Date.now() + 600, durationMs: 3000 });
+    renderSceneStage(sceneStore.active);
+    message.textContent = "正在预览动效，结束后恢复原位。";
+  });
+  section.append(title, note, scope, pointPicker, picture, values, save, reset, message, effect, preview);
+  reload(); return section;
+}
+
 function renderEventControls() {
   elements.eventType.replaceChildren();
   for (const eventType of Object.keys(manifest.events || {})) {
@@ -653,6 +740,7 @@ function renderSceneEditor() {
     loadSceneManifest(entry).then((characterManifest) => {
         if (!basePicker.isConnected) return;
         loadedCharacterManifest = characterManifest;
+        actionTools.after(createAnchorEditor(instance, characterManifest, entry));
         const characterStates = characterManifest.states || [];
         const currentState = characterStates.some((state) => state.id === (instance.currentState || instance.initialState))
           ? instance.currentState || instance.initialState
@@ -873,6 +961,7 @@ function renderSceneStage(scene) {
         prior.node.alt = image.alt;
         prior.node.title = image.title;
         syncSpeakingAnimation(prior.node, instance.instanceId);
+        syncVisualEffect(prior.node, instance.instanceId, scene.id);
         return;
       }
       image.src = url.href;
@@ -885,6 +974,7 @@ function renderSceneStage(scene) {
         else stage.append(image);
         if (prior?.state && prior.state !== stateId) animateSceneImage(image, settings, prior.src);
         syncSpeakingAnimation(image, instance.instanceId);
+        syncVisualEffect(image, instance.instanceId, scene.id);
       };
       // Decode off-screen: failed or stale requests must not blank the current pose.
       return image.decode().then(show).catch(() => {
@@ -892,6 +982,25 @@ function renderSceneStage(scene) {
       });
     }).catch((error) => { if (renderToken === sceneRenderToken) elements.status.textContent = error.message; });
   }
+}
+
+function syncVisualEffect(image, instanceId, sceneId) {
+  const effect = visualEffects.get(instanceId);
+  if (!effect || effect.sceneId !== sceneId) return;
+  const elapsed = Date.now() - effect.startedAt;
+  if (elapsed >= effect.durationMs || !["left", "right", "up", "zoom"].includes(effect.type)) return;
+  const prior = visualAnimations.get(image);
+  if (prior?.id === effect.id) return;
+  prior?.animation.cancel();
+  const base = image.style.transform;
+  const point = effect.anchor || { x: 50, y: 50 };
+  const x = Math.max(0, Math.min(100, Number(point.x) || 0));
+  const y = Math.max(0, Math.min(100, Number(point.y) || 0));
+  const delta = { left: "translateX(-20%)", right: "translateX(20%)", up: "translateY(-15%)", zoom: `translate(${(50 - x) * .5}%, ${(50 - y) * .5}%) scale(1.5)` }[effect.type];
+  const animation = image.animate([{ transform: base }, { transform: `${base} ${delta}`, offset: .5 }, { transform: base }], { duration: effect.durationMs, easing: "ease-in-out" });
+  animation.currentTime = Math.max(0, elapsed);
+  if (elapsed < 0) { animation.pause(); setTimeout(() => { if (visualAnimations.get(image)?.id === effect.id) animation.play(); }, -elapsed); }
+  visualAnimations.set(image, { id: effect.id, animation });
 }
 
 function animateSceneImage(image, settings, previousSrc = "") {
@@ -1086,6 +1195,7 @@ function publishLiveScene(scene) {
   const single = stateManager && manifest ? { characterId: manifest.id, stateId: stateManager.getSnapshot().effectiveState, transition: { ...transitionSettings } } : null;
   const snapshot = buildLiveSnapshot(scene, sceneOverrides, single);
   snapshot.replyMotions = [...replyMotions].filter(([, item]) => item.sceneId === scene.id);
+  snapshot.visualEffects = [...visualEffects].filter(([, item]) => item.sceneId === scene.id && Date.now() < item.startedAt + item.durationMs);
   const body = JSON.stringify(snapshot);
   if (!liveSending && !livePending && body === lastPublished) return;
   livePending = body;
@@ -1148,6 +1258,8 @@ async function pollLiveScene() {
       lastLiveScene = data.scene;
       replyMotions.clear();
       for (const [id, item] of data.scene.replyMotions || []) replyMotions.set(id, item);
+      visualEffects.clear();
+      for (const [id, item] of data.scene.visualEffects || []) visualEffects.set(id, item);
       renderBroadcast(data.scene);
       renderSceneStage(data.scene);
       renderLiveSingle(data.scene);

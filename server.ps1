@@ -714,6 +714,43 @@ try {
                 }
                 continue
             }
+            if ($Request.Method -eq "POST" -and $RequestPath -eq "/api/characters/anchors") {
+                try {
+                    if ($Request.ContentType -notmatch '^application/json') { throw "Invalid content type." }
+                    $Update = $Request.Body | ConvertFrom-Json
+                    $CharacterId = [string]$Update.characterId
+                    $StateId = [string]$Update.stateId
+                    if ($CharacterId -notmatch '^[a-zA-Z0-9_-]{1,64}$') { throw "Invalid character id." }
+                    $Path = Join-Path (Join-Path $Root ("characters\" + $CharacterId)) "character.json"
+                    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Character package not found." }
+                    $Character = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if ([string]$Character.id -cne $CharacterId) { throw "Character identity mismatch." }
+                    $Target = $Character
+                    if ($StateId) {
+                        $Target = @($Character.states | Where-Object { [string]$_.id -ceq $StateId }) | Select-Object -First 1
+                        if (-not $Target) { throw "State not found." }
+                    }
+                    if ($Update.reset -eq $true) {
+                        $Target.PSObject.Properties.Remove("anchors")
+                    } else {
+                        $Anchors = @{}
+                        foreach ($Name in @("head", "body", "feet")) {
+                            $Point = $Update.anchors.$Name
+                            $X = 0.0; $Y = 0.0
+                            if (-not $Point -or -not [double]::TryParse([string]$Point.x, [ref]$X) -or -not [double]::TryParse([string]$Point.y, [ref]$Y) -or [double]::IsNaN($X) -or [double]::IsNaN($Y) -or $X -lt 0 -or $X -gt 100 -or $Y -lt 0 -or $Y -gt 100) { throw "Anchor coordinates must be between 0 and 100." }
+                            $Anchors[$Name] = @{ x = $X; y = $Y }
+                        }
+                        $Target | Add-Member -NotePropertyName anchors -NotePropertyValue $Anchors -Force
+                    }
+                    $Temp = "$Path.$([guid]::NewGuid().ToString('N')).tmp"
+                    try {
+                        [IO.File]::WriteAllText($Temp, ($Character | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+                        Move-Item -LiteralPath $Temp -Destination $Path -Force
+                    } finally { if (Test-Path -LiteralPath $Temp) { Remove-Item -LiteralPath $Temp -Force } }
+                    Send-Json $Stream 200 "OK" @{ ok = $true; anchors = $Target.anchors }
+                } catch { Send-Json $Stream 400 "Bad Request" @{ error = $_.Exception.Message } }
+                continue
+            }
             if ($Request.Method -eq "POST" -and $RequestPath -eq "/api/assets/update-manifest") {
                 try {
                     if ($Request.ContentType -notmatch '^application/json') { throw "Content-Type must be application/json." }
